@@ -1,350 +1,598 @@
 
-const express = require("express");
-const http = require("http");
-const path = require("path");
-const { Server } = require("socket.io");
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const helmet = require("helmet");
-const { Pool } = require("pg");
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#10111b">
+<title>Fam Messenger</title>
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+<style>
+*{box-sizing:border-box}
+body{
+ margin:0;min-height:100vh;color:#fff;
+ font-family:Inter,Arial,sans-serif;
+ background:#10111b;
+ background-image:
+ radial-gradient(at 10% 10%,#433478 0,transparent 42%),
+ radial-gradient(at 90% 90%,#164b5d 0,transparent 42%);
+}
+button,input{font:inherit}
+button{cursor:pointer}
+.app{
+ display:flex;width:min(1250px,96vw);
+ height:92vh;margin:4vh auto;
+ border:1px solid #ffffff25;
+ border-radius:26px;overflow:hidden;
+ background:#ffffff0b;
+ backdrop-filter:blur(35px);
+ box-shadow:0 25px 100px #0008;
+}
+.sidebar{
+ width:320px;flex-shrink:0;
+ border-right:1px solid #ffffff18;
+ padding:24px;display:flex;flex-direction:column;
+}
+.logo{font-size:29px;font-weight:900;letter-spacing:-1.5px}
+.logo span{color:#a994ff}
+.tagline{font-size:10px;letter-spacing:3px;color:#999;margin:8px 0 25px}
+input{
+ width:100%;padding:13px 15px;
+ border-radius:13px;border:1px solid #ffffff20;
+ outline:none;background:#ffffff0d;color:white;
+}
+input:focus{border-color:#a994ff}
+input::placeholder{color:#858599}
+.section-title{
+ color:#999;font-size:10px;
+ letter-spacing:2px;margin:25px 0 12px;
+}
+.user-list{overflow:auto;flex:1}
+.user{
+ display:flex;align-items:center;gap:12px;
+ padding:13px;border-radius:15px;
+ cursor:pointer;transition:.2s;
+}
+.user:hover,.user.active{background:#ffffff18}
+.avatar{
+ width:44px;height:44px;flex-shrink:0;
+ border-radius:15px;display:grid;place-items:center;
+ background:linear-gradient(135deg,#9274ff,#38bfc8);
+ font-weight:bold;font-size:18px;
+}
+.user-info{min-width:0;flex:1}
+.user-info b{display:block;overflow:hidden;text-overflow:ellipsis}
+.user-info small{display:block;color:#999;margin-top:5px}
+.me{
+ border-top:1px solid #ffffff18;
+ padding-top:15px;display:flex;align-items:center;gap:12px;
+}
+.me-info{flex:1;min-width:0}
+.me-info small{display:block;color:#aaa;margin-top:4px}
+.logout{
+ border:0;background:#ffffff12;color:white;
+ padding:10px;border-radius:10px;
+}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.topbar{
+ height:78px;padding:15px 24px;
+ display:flex;align-items:center;gap:12px;
+ border-bottom:1px solid #ffffff18;
+}
+.top-info{flex:1}
+.top-info b{font-size:16px}
+.top-info small{display:block;color:#9cdeb9;margin-top:5px}
+.messages{
+ flex:1;overflow-y:auto;padding:25px;
+ display:flex;flex-direction:column;gap:12px;
+}
+.empty{
+ margin:auto;text-align:center;color:#aaa;
+ line-height:1.8;padding:20px;
+}
+.empty .big{font-size:48px}
+.bubble{
+ max-width:min(75%,520px);
+ padding:12px 16px;border-radius:18px;
+ background:#ffffff13;align-self:flex-start;
+ overflow-wrap:anywhere;line-height:1.5;
+}
+.bubble.mine{
+ align-self:flex-end;
+ background:linear-gradient(135deg,#7960dc,#456cc9);
+}
+.bubble time{
+ display:block;text-align:right;
+ font-size:10px;color:#ffffff9c;margin-top:5px;
+}
+.composer{
+ padding:17px 20px;border-top:1px solid #ffffff18;
+ display:flex;gap:10px;
+}
+.composer input{flex:1;min-width:0}
+.send{
+ width:49px;border:0;border-radius:14px;
+ color:white;font-size:21px;
+ background:linear-gradient(135deg,#9274ff,#477fe0);
+}
+.send:disabled{opacity:.4;cursor:not-allowed}
+.auth-modal{
+ position:fixed;inset:0;z-index:10;
+ display:grid;place-items:center;
+ padding:20px;background:#080911c9;
+ backdrop-filter:blur(20px);
+}
+.panel{
+ width:min(410px,100%);
+ padding:30px;border:1px solid #ffffff28;
+ border-radius:25px;background:#202035ed;
+ box-shadow:0 25px 80px #0008;
+}
+.panel h2{margin:28px 0 8px}
+.panel p{color:#999;font-size:13px;line-height:1.5}
+.panel input{margin-top:12px}
+.primary{
+ width:100%;padding:14px;
+ margin-top:17px;border:0;border-radius:13px;
+ background:linear-gradient(135deg,#9274ff,#477fe0);
+ color:white;font-weight:bold;
+}
+.switch{
+ text-align:center;color:#b7a4ff;
+ margin-top:19px;cursor:pointer;font-size:13px;
+}
+.error{color:#ff9999;font-size:12px;margin-top:12px;min-height:18px}
+.hidden{display:none!important}
+#toast{
+ position:fixed;bottom:25px;left:50%;
+ transform:translateX(-50%);
+ padding:12px 20px;border-radius:13px;
+ background:#292943;border:1px solid #ffffff30;
+ display:none;z-index:20;
+}
+@media(max-width:650px){
+ .app{width:100%;height:100dvh;margin:0;border-radius:0}
+ .sidebar{width:88px;padding:10px}
+ .logo{font-size:18px}
+ .tagline,.search,.section-title,.user-info,.me-info,.logout{display:none}
+ .user{justify-content:center;padding:9px 0}
+ .avatar{width:47px;height:47px}
+ .me{justify-content:center}
+ .topbar{height:70px;padding:12px}
+ .messages{padding:14px}
+ .composer{padding:12px}
+ .bubble{max-width:85%}
+}
+</style>
+</head>
 
-const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET;
+<body>
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL
-    ? { rejectUnauthorized: false }
-    : false
-});
+<div class="app">
+ <aside class="sidebar">
+  <div class="logo">FAM<span>.</span></div>
+  <div class="tagline">YOUR WORLD. YOUR PEOPLE.</div>
 
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json({ limit: "20kb" }));
-app.use(express.static(path.join(__dirname, "public")));
+  <input id="search" class="search" placeholder="Поиск пользователей">
 
-async function initializeDatabase() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username VARCHAR(24) UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
+  <div class="section-title">MESSAGES</div>
+  <div class="user-list" id="users"></div>
 
-    CREATE TABLE IF NOT EXISTS messages (
-      id SERIAL PRIMARY KEY,
-      sender_id INTEGER REFERENCES users(id),
-      receiver_id INTEGER REFERENCES users(id),
-      content VARCHAR(4000) NOT NULL,
-      created_at TIMESTAMP DEFAULT NOW()
-    );
+  <div class="me">
+   <div class="avatar" id="myAvatar">F</div>
+   <div class="me-info">
+    <b id="myName">Guest</b>
+    <small>Мой аккаунт</small>
+   </div>
+   <button class="logout" id="logout">↪</button>
+  </div>
+ </aside>
 
-    CREATE INDEX IF NOT EXISTS messages_pair_idx
-    ON messages(sender_id, receiver_id, created_at);
+ <main class="main">
+  <header class="topbar">
+   <div class="avatar" id="chatAvatar">F</div>
+   <div class="top-info">
+    <b id="chatName">Fam Messenger</b>
+    <small id="status">Твой мир общения</small>
+   </div>
+  </header>
 
-    CREATE INDEX IF NOT EXISTS messages_reverse_idx
-    ON messages(receiver_id, sender_id, created_at);
-  `);
+  <section class="messages" id="messages">
+   <div class="empty">
+    <div class="big">✦</div>
+    <b>Добро пожаловать в FAM.</b><br>
+    Выбери пользователя, чтобы начать общение.
+   </div>
+  </section>
+
+  <form class="composer" id="composer">
+   <input id="messageInput" maxlength="4000"
+    placeholder="Напиши сообщение..." autocomplete="off">
+   <button class="send" id="send" type="submit">➤</button>
+  </form>
+ </main>
+</div>
+
+<div class="auth-modal" id="authModal">
+ <div class="panel">
+  <div class="logo">FAM<span>.</span></div>
+  <div class="tagline">YOUR WORLD. YOUR PEOPLE.</div>
+
+  <h2 id="authTitle">Добро пожаловать!</h2>
+  <p id="authDescription">Войди в свой аккаунт Fam Messenger.</p>
+
+  <input id="username" maxlength="24"
+   placeholder="Имя пользователя" autocomplete="username">
+
+  <input id="password" type="password"
+   placeholder="Пароль (минимум 10 символов)"
+   autocomplete="current-password">
+
+  <button class="primary" id="authButton">Войти</button>
+
+  <div class="error" id="error"></div>
+  <div class="switch" id="switch">Нет аккаунта? Зарегистрироваться</div>
+ </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="/socket.io/socket.io.js"></script>
+
+<script>
+const $ = id => document.getElementById(id);
+
+let token = localStorage.getItem("fam_token");
+let currentUser = null;
+let selectedUser = null;
+let socket = null;
+let registration = false;
+let knownMessages = new Set();
+
+function toast(text){
+ $("toast").textContent=text;
+ $("toast").style.display="block";
+ setTimeout(()=>{$("toast").style.display="none"},2500);
 }
 
-function getUser(req) {
-  const header = req.headers.authorization || "";
-  if (!header.startsWith("Bearer ")) {
-    throw new Error("Unauthorized");
+async function api(url,options={}){
+ const response=await fetch(url,{
+  ...options,
+  headers:{
+   "Content-Type":"application/json",
+   ...(token?{Authorization:"Bearer "+token}:{}),
+   ...(options.headers||{})
   }
+ });
 
-  return jwt.verify(header.slice(7), JWT_SECRET);
+ const data=await response.json();
+
+ if(!response.ok){
+  throw new Error(data.error||"Ошибка сервера");
+ }
+
+ return data;
 }
 
-function createToken(user) {
-  return jwt.sign(
-    { id: user.id, username: user.username },
-    JWT_SECRET,
-    { expiresIn: "7d" }
-  );
+function showAuth(){
+ $("authModal").style.display="grid";
 }
 
-// HEALTH CHECK
-app.get("/health", async (req, res) => {
-  try {
-    await pool.query("SELECT 1");
-    res.json({
-      status: "online",
-      app: "Fam Messenger",
-      database: "connected"
-    });
-  } catch {
-    res.status(503).json({
-      status: "offline",
-      database: "disconnected"
-    });
-  }
-});
+function hideAuth(){
+ $("authModal").style.display="none";
+}
 
-// REGISTER
-app.post("/api/register", async (req, res) => {
-  try {
-    const { username, password } = req.body || {};
+function logout(){
+ if(socket)socket.disconnect();
 
-    if (
-      typeof username !== "string" ||
-      !/^[a-zA-Z0-9_]{3,24}$/.test(username) ||
-      typeof password !== "string" ||
-      password.length < 10 ||
-      password.length > 128
-    ) {
-      return res.status(400).json({
-        error: "Имя: 3–24 символа. Пароль: 10–128 символов."
-      });
-    }
+ token=null;
+ currentUser=null;
+ selectedUser=null;
 
-    const normalized = username.toLowerCase();
-    const hash = await bcrypt.hash(password, 12);
+ localStorage.removeItem("fam_token");
 
-    const result = await pool.query(
-      `INSERT INTO users(username, password)
-       VALUES($1, $2)
-       RETURNING id, username`,
-      [normalized, hash]
-    );
+ $("users").replaceChildren();
+ $("messages").innerHTML=
+  '<div class="empty">Войди в аккаунт Fam Messenger.</div>';
 
-    const user = result.rows[0];
+ $("myName").textContent="Guest";
+ $("status").textContent="Не подключён";
 
-    res.status(201).json({
-      token: createToken(user),
-      user
-    });
+ showAuth();
+}
 
-  } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({
-        error: "Это имя пользователя уже занято."
-      });
-    }
+// AUTH MODE
+$("switch").onclick=()=>{
+ registration=!registration;
 
-    console.error("Registration error:", error.message);
-    res.status(500).json({ error: "Ошибка регистрации." });
-  }
-});
+ $("authTitle").textContent=registration
+  ?"Создание аккаунта"
+  :"Добро пожаловать!";
 
-// LOGIN
-app.post("/api/login", async (req, res) => {
-  try {
-    const { username, password } = req.body || {};
+ $("authDescription").textContent=registration
+  ?"Придумай имя пользователя и пароль."
+  :"Войди в свой аккаунт Fam Messenger.";
 
-    if (
-      typeof username !== "string" ||
-      typeof password !== "string" ||
-      username.length > 24 ||
-      password.length > 128
-    ) {
-      return res.status(400).json({ error: "Неверные данные." });
-    }
+ $("authButton").textContent=registration
+  ?"Создать аккаунт"
+  :"Войти";
 
-    const result = await pool.query(
-      "SELECT id, username, password FROM users WHERE username = $1",
-      [username.toLowerCase()]
-    );
+ $("switch").textContent=registration
+  ?"Уже есть аккаунт? Войти"
+  :"Нет аккаунта? Зарегистрироваться";
 
-    const user = result.rows[0];
+ $("error").textContent="";
+};
 
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({
-        error: "Неверный логин или пароль."
-      });
-    }
+// AUTH SUBMIT
+$("authButton").onclick=async()=>{
+ const username=$("username").value.trim();
+ const password=$("password").value;
 
-    res.json({
-      token: createToken(user),
-      user: {
-        id: user.id,
-        username: user.username
-      }
-    });
+ $("authButton").disabled=true;
+ $("error").textContent="";
 
-  } catch (error) {
-    console.error("Login error:", error.message);
-    res.status(500).json({ error: "Ошибка входа." });
-  }
-});
+ try{
+  const endpoint=registration
+   ?"/api/register"
+   :"/api/login";
 
-// CURRENT USER
-app.get("/api/me", async (req, res) => {
-  try {
-    const auth = getUser(req);
+  const data=await api(endpoint,{
+   method:"POST",
+   body:JSON.stringify({username,password})
+  });
 
-    const result = await pool.query(
-      "SELECT id, username FROM users WHERE id = $1",
-      [auth.id]
-    );
+  token=data.token;
+  currentUser=data.user;
 
-    if (!result.rows.length) {
-      return res.status(401).json({ error: "Аккаунт не найден." });
-    }
+  localStorage.setItem("fam_token",token);
 
-    res.json(result.rows[0]);
+  hideAuth();
+  await connect();
 
-  } catch {
-    res.status(401).json({ error: "Необходим вход." });
-  }
-});
+ }catch(error){
+  $("error").textContent=error.message;
+ }finally{
+  $("authButton").disabled=false;
+ }
+};
+
+// PROFILE
+function updateProfile(){
+ $("myName").textContent=currentUser.username;
+ $("myAvatar").textContent=currentUser.username[0].toUpperCase();
+}
 
 // USERS
-app.get("/api/users", async (req, res) => {
-  try {
-    const auth = getUser(req);
+async function loadUsers(){
+ const users=await api("/api/users");
+ $("users").replaceChildren();
 
-    const result = await pool.query(
-      `SELECT id, username
-       FROM users
-       WHERE id != $1
-       ORDER BY username`,
-      [auth.id]
-    );
+ if(!users.length){
+  const empty=document.createElement("div");
+  empty.className="empty";
+  empty.textContent="Пока здесь никого нет.";
+  $("users").appendChild(empty);
+  return;
+ }
 
-    res.json(result.rows);
+ users.forEach(user=>{
+  const item=document.createElement("div");
+  item.className="user";
 
-  } catch {
-    res.status(401).json({ error: "Необходим вход." });
-  }
-});
+  const avatar=document.createElement("div");
+  avatar.className="avatar";
+  avatar.textContent=user.username[0].toUpperCase();
 
-// MESSAGE HISTORY
-app.get("/api/messages/:userId", async (req, res) => {
-  try {
-    const auth = getUser(req);
-    const otherId = Number(req.params.userId);
+  const info=document.createElement("div");
+  info.className="user-info";
 
-    if (
-      !Number.isSafeInteger(otherId) ||
-      otherId <= 0 ||
-      otherId === auth.id
-    ) {
-      return res.status(400).json({ error: "Неверный пользователь." });
-    }
+  const name=document.createElement("b");
+  name.textContent=user.username;
 
-    const result = await pool.query(
-      `SELECT id, sender_id, receiver_id, content, created_at
-       FROM messages
-       WHERE
-         (sender_id = $1 AND receiver_id = $2)
-         OR
-         (sender_id = $2 AND receiver_id = $1)
-       ORDER BY created_at DESC
-       LIMIT 100`,
-      [auth.id, otherId]
-    );
+  const subtitle=document.createElement("small");
+  subtitle.textContent="Fam Messenger";
 
-    res.json(result.rows.reverse());
+  info.append(name,subtitle);
+  item.append(avatar,info);
 
-  } catch {
-    res.status(401).json({ error: "Необходим вход." });
-  }
-});
+  item.onclick=()=>selectUser(user,item);
 
-// SOCKET AUTH
-io.use((socket, next) => {
-  try {
-    const token = socket.handshake.auth?.token;
+  item.dataset.username=user.username.toLowerCase();
 
-    if (!token) throw new Error("No token");
-
-    socket.user = jwt.verify(token, JWT_SECRET);
-    next();
-
-  } catch {
-    next(new Error("Unauthorized"));
-  }
-});
-
-// REALTIME MESSAGING
-io.on("connection", (socket) => {
-  const userId = socket.user.id;
-
-  socket.join(`user:${userId}`);
-
-  let lastMessageTime = 0;
-
-  socket.on("send_message", async (data, callback) => {
-    const reply = typeof callback === "function"
-      ? callback
-      : () => {};
-
-    try {
-      const now = Date.now();
-
-      if (now - lastMessageTime < 500) {
-        return reply({ error: "Подожди немного." });
-      }
-
-      const receiverId = data?.receiverId;
-      const content = data?.content;
-
-      if (
-        !Number.isSafeInteger(receiverId) ||
-        receiverId <= 0 ||
-        receiverId === userId ||
-        typeof content !== "string" ||
-        !content.trim() ||
-        content.length > 4000
-      ) {
-        return reply({ error: "Некорректное сообщение." });
-      }
-
-      const receiver = await pool.query(
-        "SELECT id FROM users WHERE id = $1",
-        [receiverId]
-      );
-
-      if (!receiver.rows.length) {
-        return reply({ error: "Пользователь не найден." });
-      }
-
-      lastMessageTime = now;
-
-      const result = await pool.query(
-        `INSERT INTO messages(sender_id, receiver_id, content)
-         VALUES($1, $2, $3)
-         RETURNING id, sender_id, receiver_id, content, created_at`,
-        [userId, receiverId, content.trim()]
-      );
-
-      const message = result.rows[0];
-
-      io.to(`user:${userId}`).emit("new_message", message);
-      io.to(`user:${receiverId}`).emit("new_message", message);
-
-      reply({ success: true });
-
-    } catch (error) {
-      console.error("Message error:", error.message);
-      reply({ error: "Не удалось отправить сообщение." });
-    }
-  });
-});
-
-// START SERVER
-async function start() {
-  if (!JWT_SECRET || JWT_SECRET.length < 32) {
-    throw new Error("JWT_SECRET должен содержать минимум 32 символа.");
-  }
-
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL не настроен.");
-  }
-
-  await initializeDatabase();
-
-  server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Fam Messenger running on port ${PORT}`);
-  });
+  $("users").appendChild(item);
+ });
 }
 
-start().catch(error => {
-  console.error("Startup error:", error);
-  process.exit(1);
-});
+// MESSAGE RENDER
+function addMessage(message){
+ if(knownMessages.has(message.id))return;
+
+ knownMessages.add(message.id);
+
+ const div=document.createElement("div");
+
+ div.className="bubble "+
+  (Number(message.sender_id)===Number(currentUser.id)
+   ?"mine":"");
+
+ const content=document.createElement("div");
+ content.textContent=message.content;
+
+ const time=document.createElement("time");
+ const date=new Date(message.created_at);
+
+ time.textContent=isNaN(date.getTime())
+  ?""
+  :date.toLocaleTimeString([],{
+    hour:"2-digit",
+    minute:"2-digit"
+   });
+
+ div.append(content,time);
+
+ $("messages").appendChild(div);
+ $("messages").scrollTop=$("messages").scrollHeight;
+}
+
+// OPEN CHAT
+async function selectUser(user,item){
+ selectedUser=user;
+ knownMessages.clear();
+
+ document.querySelectorAll(".user").forEach(x=>{
+  x.classList.remove("active");
+ });
+
+ item.classList.add("active");
+
+ $("chatName").textContent=user.username;
+ $("chatAvatar").textContent=user.username[0].toUpperCase();
+ $("messages").replaceChildren();
+
+ const loading=document.createElement("div");
+ loading.className="empty";
+ loading.textContent="Загрузка переписки...";
+ $("messages").appendChild(loading);
+
+ try{
+  const history=await api("/api/messages/"+user.id);
+
+  $("messages").replaceChildren();
+
+  if(!history.length){
+   const empty=document.createElement("div");
+   empty.className="empty";
+   empty.textContent="Начните своё общение!";
+   $("messages").appendChild(empty);
+  }
+
+  history.forEach(addMessage);
+
+ }catch(error){
+  $("messages").replaceChildren();
+
+  const empty=document.createElement("div");
+  empty.className="empty";
+  empty.textContent="Не удалось загрузить сообщения.";
+  $("messages").appendChild(empty);
+ }
+}
+
+// SOCKET
+async function connect(){
+ if(socket)socket.disconnect();
+
+ socket=io({
+  auth:{token}
+ });
+
+ socket.on("connect",async()=>{
+  $("status").textContent="● Подключено";
+
+  try{
+   await loadUsers();
+  }catch(error){
+   toast(error.message);
+  }
+ });
+
+ socket.on("disconnect",()=>{
+  $("status").textContent="Нет подключения";
+ });
+
+ socket.on("connect_error",()=>{
+  $("status").textContent="Ошибка подключения";
+ });
+
+ socket.on("new_message",message=>{
+  if(!selectedUser)return;
+
+  const belongsToChat=
+   (Number(message.sender_id)===Number(selectedUser.id) &&
+    Number(message.receiver_id)===Number(currentUser.id))
+   ||
+   (Number(message.sender_id)===Number(currentUser.id) &&
+    Number(message.receiver_id)===Number(selectedUser.id));
+
+  if(belongsToChat){
+   addMessage(message);
+  }
+ });
+}
+
+// SEND
+$("composer").onsubmit=e=>{
+ e.preventDefault();
+
+ if(!selectedUser){
+  toast("Сначала выбери пользователя.");
+  return;
+ }
+
+ if(!socket || !socket.connected){
+  toast("Нет подключения к серверу.");
+  return;
+ }
+
+ const content=$("messageInput").value.trim();
+ if(!content)return;
+
+ $("send").disabled=true;
+
+ socket.emit("send_message",{
+  receiverId:Number(selectedUser.id),
+  content
+ },result=>{
+  $("send").disabled=false;
+
+  if(result?.error){
+   toast(result.error);
+   return;
+  }
+
+  $("messageInput").value="";
+  $("messageInput").focus();
+ });
+};
+
+// SEARCH
+$("search").oninput=()=>{
+ const query=$("search").value.toLowerCase();
+
+ document.querySelectorAll(".user").forEach(user=>{
+  user.style.display=
+   user.dataset.username.includes(query)
+   ?"flex":"none";
+ });
+};
+
+// LOGOUT
+$("logout").onclick=logout;
+
+// RESTORE SESSION
+async function start(){
+ if(!token){
+  showAuth();
+  return;
+ }
+
+ try{
+  currentUser=await api("/api/me");
+
+  updateProfile();
+  hideAuth();
+
+  await connect();
+
+ }catch{
+  localStorage.removeItem("fam_token");
+  token=null;
+  showAuth();
+ }
+}
+
+start();
+</script>
+</body>
+</html>
