@@ -1,6 +1,7 @@
+
 {
   "name": "fam-messenger",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Fam Messenger - Your world. Your people.",
   "main": "server.js",
   "scripts": {
@@ -12,6 +13,7 @@
     "bcryptjs": "^3.0.2",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.3",
-    "helmet": "^8.1.0"
+    "helmet": "^8.1.0",
+    "multer": "^2.0.2"
   }
 }
