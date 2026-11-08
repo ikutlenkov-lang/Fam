@@ -1,5 +1,7 @@
+
 const express = require("express");
 const http = require("http");
+const path = require("path");
 const { Server } = require("socket.io");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -12,6 +14,7 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET;
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL
@@ -19,9 +22,9 @@ const pool = new Pool({
     : false
 });
 
-app.use(helmet());
-app.use(express.json());
-app.use(express.static("public"));
+app.use(helmet({ contentSecurityPolicy: false }));
+app.use(express.json({ limit: "20kb" }));
+app.use(express.static(path.join(__dirname, "public")));
 
 async function initializeDatabase() {
   await pool.query(`
@@ -36,20 +39,56 @@ async function initializeDatabase() {
       id SERIAL PRIMARY KEY,
       sender_id INTEGER REFERENCES users(id),
       receiver_id INTEGER REFERENCES users(id),
-      content TEXT NOT NULL,
+      content VARCHAR(4000) NOT NULL,
       created_at TIMESTAMP DEFAULT NOW()
     );
+
+    CREATE INDEX IF NOT EXISTS messages_pair_idx
+    ON messages(sender_id, receiver_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS messages_reverse_idx
+    ON messages(receiver_id, sender_id, created_at);
   `);
 }
 
-function authenticate(token) {
-  if (!JWT_SECRET) throw new Error("Server not configured");
-  return jwt.verify(token, JWT_SECRET);
+function getUser(req) {
+  const header = req.headers.authorization || "";
+  if (!header.startsWith("Bearer ")) {
+    throw new Error("Unauthorized");
+  }
+
+  return jwt.verify(header.slice(7), JWT_SECRET);
 }
 
+function createToken(user) {
+  return jwt.sign(
+    { id: user.id, username: user.username },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+}
+
+// HEALTH CHECK
+app.get("/health", async (req, res) => {
+  try {
+    await pool.query("SELECT 1");
+    res.json({
+      status: "online",
+      app: "Fam Messenger",
+      database: "connected"
+    });
+  } catch {
+    res.status(503).json({
+      status: "offline",
+      database: "disconnected"
+    });
+  }
+});
+
+// REGISTER
 app.post("/api/register", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
 
     if (
       typeof username !== "string" ||
@@ -59,36 +98,55 @@ app.post("/api/register", async (req, res) => {
       password.length > 128
     ) {
       return res.status(400).json({
-        error: "Invalid username or password"
+        error: "Имя: 3–24 символа. Пароль: 10–128 символов."
       });
     }
 
+    const normalized = username.toLowerCase();
     const hash = await bcrypt.hash(password, 12);
 
     const result = await pool.query(
-      `INSERT INTO users (username, password)
-       VALUES ($1, $2)
+      `INSERT INTO users(username, password)
+       VALUES($1, $2)
        RETURNING id, username`,
-      [username.toLowerCase(), hash]
+      [normalized, hash]
     );
 
-    res.json({ user: result.rows[0] });
+    const user = result.rows[0];
+
+    res.status(201).json({
+      token: createToken(user),
+      user
+    });
+
   } catch (error) {
-    res.status(400).json({ error: "Registration failed" });
+    if (error.code === "23505") {
+      return res.status(409).json({
+        error: "Это имя пользователя уже занято."
+      });
+    }
+
+    console.error("Registration error:", error.message);
+    res.status(500).json({ error: "Ошибка регистрации." });
   }
 });
 
+// LOGIN
 app.post("/api/login", async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password } = req.body || {};
 
-    if (typeof username !== "string" ||
-        typeof password !== "string") {
-      return res.status(400).json({ error: "Invalid login" });
+    if (
+      typeof username !== "string" ||
+      typeof password !== "string" ||
+      username.length > 24 ||
+      password.length > 128
+    ) {
+      return res.status(400).json({ error: "Неверные данные." });
     }
 
     const result = await pool.query(
-      "SELECT * FROM users WHERE username = $1",
+      "SELECT id, username, password FROM users WHERE username = $1",
       [username.toLowerCase()]
     );
 
@@ -96,160 +154,197 @@ app.post("/api/login", async (req, res) => {
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({
-        error: "Wrong username or password"
+        error: "Неверный логин или пароль."
       });
     }
 
-    const token = jwt.sign(
-      { id: user.id, username: user.username },
-      JWT_SECRET,
-      { expiresIn: "7d" }
-    );
-
     res.json({
-      token,
-      user: { id: user.id, username: user.username }
+      token: createToken(user),
+      user: {
+        id: user.id,
+        username: user.username
+      }
     });
-  } catch {
-    res.status(500).json({ error: "Login failed" });
+
+  } catch (error) {
+    console.error("Login error:", error.message);
+    res.status(500).json({ error: "Ошибка входа." });
   }
 });
 
-app.get("/api/users", async (req, res) => {
-  try {
-    const user = authenticate(
-      (req.headers.authorization || "").replace("Bearer ", "")
-    );
-
-    const result = await pool.query(
-      "SELECT id, username FROM users WHERE id != $1",
-      [user.id]
-    );
-
-    res.json(result.rows);
-  } catch {
-    res.status(401).json({ error: "Unauthorized" });
-  }
-});
-
-io.use((socket, next) => {
-  try {
-    socket.user = authenticate(socket.handshake.auth.token);
-    next();
-  } catch {
-    next(new Error("Unauthorized"));
-  }
-});
-
-io.on("connection", (socket) => {
-  socket.join(`user:${socket.user.id}`);
-
-  socket.on("send_message", async (data, callback) => {
-    try {
-      if (
-        !Number.isInteger(data?.receiverId) ||
-        typeof data?.content !== "string" ||
-        !data.content.trim() ||
-        data.content.length > 4000
-      ) {
-        return callback?.({ error: "Invalid message" });
-      }
-
-      const receiver = await pool.query(
-        "SELECT id FROM users WHERE id = $1",
-        [data.receiverId]
-      );
-
-      if (!receiver.rows.length) {
-        return callback?.({ error: "User not found" });
-      }
-
-      const result = await pool.query(
-        `INSERT INTO messages (sender_id, receiver_id, content)
-         VALUES ($1, $2, $3)
-         RETURNING *`,
-        [socket.user.id, data.receiverId, data.content.trim()]
-      );
-
-      const message = result.rows[0];
-
-      io.to(`user:${data.receiverId}`).emit(
-        "new_message",
-        message
-      );
-
-      socket.emit("new_message", message);
-      callback?.({ success: true });
-    } catch {
-      callback?.({ error: "Message failed" });
-    }
-  });
-});
-
-app.get("/health", (req, res) => {// Проверка текущего аккаунта
+// CURRENT USER
 app.get("/api/me", async (req, res) => {
   try {
-    const user = authenticate(
-      (req.headers.authorization || "").replace("Bearer ", "")
-    );
+    const auth = getUser(req);
 
     const result = await pool.query(
       "SELECT id, username FROM users WHERE id = $1",
-      [user.id]
+      [auth.id]
     );
 
     if (!result.rows.length) {
-      return res.status(401).json({ error: "Account not found" });
+      return res.status(401).json({ error: "Аккаунт не найден." });
     }
 
     res.json(result.rows[0]);
+
   } catch {
-    res.status(401).json({ error: "Unauthorized" });
+    res.status(401).json({ error: "Необходим вход." });
   }
 });
 
-// Загрузка истории личной переписки
-app.get("/api/messages/:userId", async (req, res) => {
+// USERS
+app.get("/api/users", async (req, res) => {
   try {
-    const user = authenticate(
-      (req.headers.authorization || "").replace("Bearer ", "")
+    const auth = getUser(req);
+
+    const result = await pool.query(
+      `SELECT id, username
+       FROM users
+       WHERE id != $1
+       ORDER BY username`,
+      [auth.id]
     );
 
+    res.json(result.rows);
+
+  } catch {
+    res.status(401).json({ error: "Необходим вход." });
+  }
+});
+
+// MESSAGE HISTORY
+app.get("/api/messages/:userId", async (req, res) => {
+  try {
+    const auth = getUser(req);
     const otherId = Number(req.params.userId);
 
-    if (!Number.isInteger(otherId) || otherId <= 0 ||
-        otherId === user.id) {
-      return res.status(400).json({ error: "Invalid user" });
+    if (
+      !Number.isSafeInteger(otherId) ||
+      otherId <= 0 ||
+      otherId === auth.id
+    ) {
+      return res.status(400).json({ error: "Неверный пользователь." });
     }
 
     const result = await pool.query(
       `SELECT id, sender_id, receiver_id, content, created_at
        FROM messages
-       WHERE (sender_id = $1 AND receiver_id = $2)
-          OR (sender_id = $2 AND receiver_id = $1)
+       WHERE
+         (sender_id = $1 AND receiver_id = $2)
+         OR
+         (sender_id = $2 AND receiver_id = $1)
        ORDER BY created_at DESC
        LIMIT 100`,
-      [user.id, otherId]
+      [auth.id, otherId]
     );
 
     res.json(result.rows.reverse());
+
   } catch {
-    res.status(401).json({ error: "Unauthorized" });
+    res.status(401).json({ error: "Необходим вход." });
   }
 });
-  res.json({ status: "Fam Messenger online" });
+
+// SOCKET AUTH
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token;
+
+    if (!token) throw new Error("No token");
+
+    socket.user = jwt.verify(token, JWT_SECRET);
+    next();
+
+  } catch {
+    next(new Error("Unauthorized"));
+  }
 });
 
+// REALTIME MESSAGING
+io.on("connection", (socket) => {
+  const userId = socket.user.id;
+
+  socket.join(`user:${userId}`);
+
+  let lastMessageTime = 0;
+
+  socket.on("send_message", async (data, callback) => {
+    const reply = typeof callback === "function"
+      ? callback
+      : () => {};
+
+    try {
+      const now = Date.now();
+
+      if (now - lastMessageTime < 500) {
+        return reply({ error: "Подожди немного." });
+      }
+
+      const receiverId = data?.receiverId;
+      const content = data?.content;
+
+      if (
+        !Number.isSafeInteger(receiverId) ||
+        receiverId <= 0 ||
+        receiverId === userId ||
+        typeof content !== "string" ||
+        !content.trim() ||
+        content.length > 4000
+      ) {
+        return reply({ error: "Некорректное сообщение." });
+      }
+
+      const receiver = await pool.query(
+        "SELECT id FROM users WHERE id = $1",
+        [receiverId]
+      );
+
+      if (!receiver.rows.length) {
+        return reply({ error: "Пользователь не найден." });
+      }
+
+      lastMessageTime = now;
+
+      const result = await pool.query(
+        `INSERT INTO messages(sender_id, receiver_id, content)
+         VALUES($1, $2, $3)
+         RETURNING id, sender_id, receiver_id, content, created_at`,
+        [userId, receiverId, content.trim()]
+      );
+
+      const message = result.rows[0];
+
+      io.to(`user:${userId}`).emit("new_message", message);
+      io.to(`user:${receiverId}`).emit("new_message", message);
+
+      reply({ success: true });
+
+    } catch (error) {
+      console.error("Message error:", error.message);
+      reply({ error: "Не удалось отправить сообщение." });
+    }
+  });
+});
+
+// START SERVER
 async function start() {
-  if (!JWT_SECRET) {
-    throw new Error("JWT_SECRET is missing");
+  if (!JWT_SECRET || JWT_SECRET.length < 32) {
+    throw new Error("JWT_SECRET должен содержать минимум 32 символа.");
+  }
+
+  if (!process.env.DATABASE_URL) {
+    throw new Error("DATABASE_URL не настроен.");
   }
 
   await initializeDatabase();
 
   server.listen(PORT, "0.0.0.0", () => {
-    console.log(`Fam Messenger running on ${PORT}`);
+    console.log(`Fam Messenger running on port ${PORT}`);
   });
 }
 
-start().catch(console.error);
+start().catch(error => {
+  console.error("Startup error:", error);
+  process.exit(1);
+});
