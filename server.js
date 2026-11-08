@@ -186,7 +186,57 @@ io.on("connection", (socket) => {
   });
 });
 
-app.get("/health", (req, res) => {
+app.get("/health", (req, res) => {// Проверка текущего аккаунта
+app.get("/api/me", async (req, res) => {
+  try {
+    const user = authenticate(
+      (req.headers.authorization || "").replace("Bearer ", "")
+    );
+
+    const result = await pool.query(
+      "SELECT id, username FROM users WHERE id = $1",
+      [user.id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(401).json({ error: "Account not found" });
+    }
+
+    res.json(result.rows[0]);
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+  }
+});
+
+// Загрузка истории личной переписки
+app.get("/api/messages/:userId", async (req, res) => {
+  try {
+    const user = authenticate(
+      (req.headers.authorization || "").replace("Bearer ", "")
+    );
+
+    const otherId = Number(req.params.userId);
+
+    if (!Number.isInteger(otherId) || otherId <= 0 ||
+        otherId === user.id) {
+      return res.status(400).json({ error: "Invalid user" });
+    }
+
+    const result = await pool.query(
+      `SELECT id, sender_id, receiver_id, content, created_at
+       FROM messages
+       WHERE (sender_id = $1 AND receiver_id = $2)
+          OR (sender_id = $2 AND receiver_id = $1)
+       ORDER BY created_at DESC
+       LIMIT 100`,
+      [user.id, otherId]
+    );
+
+    res.json(result.rows.reverse());
+  } catch {
+    res.status(401).json({ error: "Unauthorized" });
+  }
+});
   res.json({ status: "Fam Messenger online" });
 });
 
