@@ -7,6 +7,7 @@ const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
 const helmet = require("helmet");
 const multer = require("multer");
+const cors = require("cors");
 
 const app = express();
 const server = http.createServer(app);
@@ -16,7 +17,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
 
 if (!JWT_SECRET || !DATABASE_URL) {
-  console.error("Missing JWT_SECRET or DATABASE_URL");
+  console.error("Missing environment variables");
   process.exit(1);
 }
 
@@ -28,14 +29,22 @@ const pool = new Pool({
 });
 
 const io = new Server(server, {
-  cors: { origin: true, credentials: true },
-  maxHttpBufferSize: 1e6
+  cors: {
+    origin: true,
+    methods: ["GET", "POST"]
+  }
 });
+
+app.use(cors({
+  origin: true,
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: "2mb" }));
 
-// ---------------- DATABASE ----------------
+// DATABASE
 
 async function initDatabase() {
   await pool.query(`
@@ -66,25 +75,15 @@ async function initDatabase() {
       sender_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       receiver_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       content TEXT DEFAULT '',
+      attachment_id INTEGER REFERENCES files(id) ON DELETE SET NULL,
       created_at TIMESTAMP DEFAULT NOW()
     )
   `);
 
-  await pool.query(`
-    ALTER TABLE messages
-    ADD COLUMN IF NOT EXISTS attachment_id INTEGER
-    REFERENCES files(id) ON DELETE SET NULL
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS messages_chat_idx
-    ON messages(sender_id, receiver_id, created_at)
-  `);
-
-  console.log("Database initialized");
+  console.log("Database ready");
 }
 
-// ---------------- AUTH ----------------
+// AUTH
 
 function createToken(user) {
   return jwt.sign(
@@ -101,24 +100,24 @@ function auth(req, res, next) {
     : null;
 
   if (!token) {
-    return res.status(401).json({ error: "Требуется авторизация" });
+    return res.status(401).json({ error: "Нет авторизации" });
   }
 
   try {
     req.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch {
-    return res.status(401).json({ error: "Недействительный токен" });
+    res.status(401).json({ error: "Недействительный токен" });
   }
 }
 
-// ---------------- HEALTH ----------------
+// HEALTH
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok", app: "Fam Messenger" });
 });
 
-// ---------------- REGISTER ----------------
+// REGISTER
 
 app.post("/api/register", async (req, res) => {
   try {
@@ -127,13 +126,13 @@ app.post("/api/register", async (req, res) => {
 
     if (!/^[a-zA-Z0-9_]{3,40}$/.test(username)) {
       return res.status(400).json({
-        error: "Имя: 3–40 символов, латинские буквы, цифры и _"
+        error: "Имя должно содержать 3–40 символов"
       });
     }
 
     if (password.length < 8 || password.length > 100) {
       return res.status(400).json({
-        error: "Пароль должен содержать от 8 до 100 символов"
+        error: "Пароль должен содержать 8–100 символов"
       });
     }
 
@@ -162,7 +161,7 @@ app.post("/api/register", async (req, res) => {
   }
 });
 
-// ---------------- LOGIN ----------------
+// LOGIN
 
 app.post("/api/login", async (req, res) => {
   try {
@@ -178,13 +177,16 @@ app.post("/api/login", async (req, res) => {
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
       return res.status(401).json({
-        error: "Неверное имя пользователя или пароль"
+        error: "Неверное имя или пароль"
       });
     }
 
     res.json({
       token: createToken(user),
-      user: { id: user.id, username: user.username }
+      user: {
+        id: user.id,
+        username: user.username
+      }
     });
   } catch (error) {
     console.error(error);
@@ -192,7 +194,7 @@ app.post("/api/login", async (req, res) => {
   }
 });
 
-// ---------------- CURRENT USER ----------------
+// CURRENT USER
 
 app.get("/api/me", auth, async (req, res) => {
   const result = await pool.query(
@@ -200,35 +202,28 @@ app.get("/api/me", auth, async (req, res) => {
     [req.user.id]
   );
 
-  if (!result.rows[0]) {
+  if (!result.rows.length) {
     return res.status(404).json({ error: "Пользователь не найден" });
   }
 
   res.json(result.rows[0]);
 });
 
-// ---------------- USERS ----------------
+// USERS
 
 app.get("/api/users", auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, username
-       FROM users
-       WHERE id != $1
-       ORDER BY username`,
-      [req.user.id]
-    );
+  const result = await pool.query(
+    `SELECT id, username FROM users
+     WHERE id != $1 ORDER BY username`,
+    [req.user.id]
+  );
 
-    res.json(result.rows);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Ошибка загрузки пользователей" });
-  }
+  res.json(result.rows);
 });
 
-// ---------------- FILE UPLOAD ----------------
+// FILE UPLOAD
 
-const allowedMimeTypes = new Set([
+const allowedTypes = new Set([
   "image/jpeg",
   "image/png",
   "image/gif",
@@ -248,26 +243,22 @@ const allowedMimeTypes = new Set([
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: {
-    fileSize: 15 * 1024 * 1024,
-    files: 1
-  },
-  fileFilter: (req, file, callback) => {
-    if (!allowedMimeTypes.has(file.mimetype)) {
-      return callback(new Error("Этот тип файла не поддерживается"));
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter(req, file, cb) {
+    if (!allowedTypes.has(file.mimetype)) {
+      return cb(new Error("Тип файла не поддерживается"));
     }
-
-    callback(null, true);
+    cb(null, true);
   }
 });
 
 app.post("/api/upload", auth, (req, res) => {
-  upload.single("file")(req, res, async (uploadError) => {
-    if (uploadError) {
+  upload.single("file")(req, res, async error => {
+    if (error) {
       return res.status(400).json({
-        error: uploadError.code === "LIMIT_FILE_SIZE"
-          ? "Максимальный размер файла — 15 МБ"
-          : uploadError.message
+        error: error.code === "LIMIT_FILE_SIZE"
+          ? "Максимум 15 МБ"
+          : error.message
       });
     }
 
@@ -275,7 +266,7 @@ app.post("/api/upload", auth, (req, res) => {
       const receiverId = Number(req.body.receiverId);
 
       if (!Number.isInteger(receiverId) || receiverId <= 0) {
-        return res.status(400).json({ error: "Некорректный получатель" });
+        return res.status(400).json({ error: "Неверный получатель" });
       }
 
       if (!req.file) {
@@ -291,19 +282,19 @@ app.post("/api/upload", auth, (req, res) => {
         return res.status(404).json({ error: "Получатель не найден" });
       }
 
-      const safeName = req.file.originalname
-        .replace(/[\\/\0]/g, "_")
+      const name = req.file.originalname
+        .replace(/[\\/\0\r\n]/g, "_")
         .slice(0, 200);
 
       const result = await pool.query(
         `INSERT INTO files
-          (sender_id, receiver_id, original_name, mime_type, file_size, data)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, original_name, mime_type, file_size`,
+        (sender_id, receiver_id, original_name, mime_type, file_size, data)
+        VALUES ($1,$2,$3,$4,$5,$6)
+        RETURNING id, original_name, mime_type, file_size`,
         [
           req.user.id,
           receiverId,
-          safeName,
+          name,
           req.file.mimetype,
           req.file.size,
           req.file.buffer
@@ -318,33 +309,23 @@ app.post("/api/upload", auth, (req, res) => {
           id: file.id,
           name: file.original_name,
           type: file.mime_type,
-          size: Number(file.file_size),
-          url: `/api/files/${file.id}`
+          size: Number(file.file_size)
         }
       });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Не удалось сохранить файл" });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: "Ошибка сохранения файла" });
     }
   });
 });
 
-// ---------------- FILE DOWNLOAD ----------------
+// FILE DOWNLOAD
 
 app.get("/api/files/:id", auth, async (req, res) => {
   try {
-    const fileId = Number(req.params.id);
-
-    if (!Number.isInteger(fileId)) {
-      return res.status(400).json({ error: "Некорректный ID файла" });
-    }
-
     const result = await pool.query(
-      `SELECT id, sender_id, receiver_id, original_name,
-              mime_type, file_size, data
-       FROM files
-       WHERE id = $1`,
-      [fileId]
+      `SELECT * FROM files WHERE id = $1`,
+      [Number(req.params.id)]
     );
 
     const file = result.rows[0];
@@ -354,10 +335,10 @@ app.get("/api/files/:id", auth, async (req, res) => {
     }
 
     if (
-      file.sender_id !== req.user.id &&
-      file.receiver_id !== req.user.id
+      Number(file.sender_id) !== Number(req.user.id) &&
+      Number(file.receiver_id) !== Number(req.user.id)
     ) {
-      return res.status(403).json({ error: "Нет доступа к файлу" });
+      return res.status(403).json({ error: "Нет доступа" });
     }
 
     const safeName = file.original_name.replace(/["\r\n]/g, "_");
@@ -371,76 +352,63 @@ app.get("/api/files/:id", auth, async (req, res) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
 
     res.send(file.data);
-  } catch (error) {
-    console.error(error);
+  } catch (e) {
+    console.error(e);
     res.status(500).json({ error: "Ошибка скачивания" });
   }
 });
 
-// ---------------- CHAT HISTORY ----------------
+// CHAT HISTORY
 
 app.get("/api/messages/:userId", auth, async (req, res) => {
   try {
     const otherId = Number(req.params.userId);
 
     if (!Number.isInteger(otherId) || otherId <= 0) {
-      return res.status(400).json({ error: "Некорректный пользователь" });
+      return res.status(400).json({ error: "Неверный пользователь" });
     }
 
     const result = await pool.query(
-      `SELECT
-         m.id,
-         m.sender_id,
-         m.receiver_id,
-         m.content,
-         m.attachment_id,
-         m.created_at,
-         f.original_name AS attachment_name,
-         f.mime_type AS attachment_type,
-         f.file_size AS attachment_size
+      `SELECT m.id, m.sender_id, m.receiver_id, m.content,
+       m.attachment_id, m.created_at,
+       f.original_name AS attachment_name,
+       f.mime_type AS attachment_type,
+       f.file_size AS attachment_size
        FROM messages m
        LEFT JOIN files f ON f.id = m.attachment_id
-       WHERE
-         (m.sender_id = $1 AND m.receiver_id = $2)
-         OR
-         (m.sender_id = $2 AND m.receiver_id = $1)
-       ORDER BY m.created_at ASC
-       LIMIT 500`,
+       WHERE (m.sender_id = $1 AND m.receiver_id = $2)
+       OR (m.sender_id = $2 AND m.receiver_id = $1)
+       ORDER BY m.created_at ASC LIMIT 500`,
       [req.user.id, otherId]
     );
 
     res.json(result.rows);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Ошибка загрузки сообщений" });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Ошибка сообщений" });
   }
 });
 
-// ---------------- SOCKET AUTH ----------------
+// SOCKET.IO AUTH
 
 io.use((socket, next) => {
   try {
-    const token = socket.handshake.auth?.token;
-
-    if (!token) {
-      return next(new Error("Нет токена"));
-    }
-
-    socket.user = jwt.verify(token, JWT_SECRET);
+    socket.user = jwt.verify(
+      socket.handshake.auth?.token,
+      JWT_SECRET
+    );
     next();
   } catch {
-    next(new Error("Недействительная авторизация"));
+    next(new Error("Ошибка авторизации"));
   }
 });
 
-// ---------------- SOCKET CONNECTION ----------------
+// SOCKET.IO
 
-io.on("connection", (socket) => {
-  const userId = socket.user.id;
+io.on("connection", socket => {
+  const userId = Number(socket.user.id);
 
-  socket.join(`user:${userId}`);
-
-  console.log("Connected:", userId);
+  socket.join("user:" + userId);
 
   socket.on("send_message", async (data = {}, callback) => {
     try {
@@ -451,84 +419,77 @@ io.on("connection", (socket) => {
         : null;
 
       if (!Number.isInteger(receiverId) || receiverId <= 0) {
-        throw new Error("Некорректный получатель");
+        throw new Error("Неверный получатель");
       }
 
       if (!content.trim() && !attachmentId) {
         throw new Error("Пустое сообщение");
       }
 
+      if (receiverId === userId) {
+        throw new Error("Нельзя отправить сообщение самому себе");
+      }
+
       if (attachmentId) {
-        const file = await pool.query(
+        const check = await pool.query(
           `SELECT id FROM files
            WHERE id = $1 AND sender_id = $2 AND receiver_id = $3`,
           [attachmentId, userId, receiverId]
         );
 
-        if (!file.rows.length) {
-          throw new Error("Вложение не найдено или недоступно");
+        if (!check.rows.length) {
+          throw new Error("Вложение не найдено");
         }
       }
 
       const result = await pool.query(
         `INSERT INTO messages
-          (sender_id, receiver_id, content, attachment_id)
-         VALUES ($1, $2, $3, $4)
-         RETURNING id, sender_id, receiver_id, content,
-                   attachment_id, created_at`,
+        (sender_id, receiver_id, content, attachment_id)
+        VALUES ($1,$2,$3,$4)
+        RETURNING id, sender_id, receiver_id, content,
+        attachment_id, created_at`,
         [userId, receiverId, content, attachmentId]
       );
 
       const message = result.rows[0];
 
       if (attachmentId) {
-        const file = await pool.query(
+        const f = await pool.query(
           `SELECT original_name, mime_type, file_size
            FROM files WHERE id = $1`,
           [attachmentId]
         );
 
-        const info = file.rows[0];
-
-        message.attachment_name = info.original_name;
-        message.attachment_type = info.mime_type;
-        message.attachment_size = Number(info.file_size);
+        if (f.rows[0]) {
+          message.attachment_name = f.rows[0].original_name;
+          message.attachment_type = f.rows[0].mime_type;
+          message.attachment_size = Number(f.rows[0].file_size);
+        }
       }
 
-      io.to(`user:${receiverId}`).emit("new_message", message);
+      io.to("user:" + receiverId).emit("new_message", message);
       socket.emit("new_message", message);
 
       if (typeof callback === "function") {
         callback({ success: true, message });
       }
-    } catch (error) {
+    } catch (e) {
       if (typeof callback === "function") {
-        callback({ success: false, error: error.message });
+        callback({ success: false, error: e.message });
       }
     }
   });
-
-  socket.on("disconnect", () => {
-    console.log("Disconnected:", userId);
-  });
 });
 
-// ---------------- ERRORS ----------------
-
-app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: "Внутренняя ошибка сервера" });
-});
-
-// ---------------- START ----------------
+// START
 
 initDatabase()
   .then(() => {
     server.listen(PORT, "0.0.0.0", () => {
-      console.log(`Fam Messenger running on port ${PORT}`);
+      console.log("Fam Messenger started on " + PORT);
     });
   })
-  .catch((error) => {
-    console.error("Database startup failed:", error);
+  .catch(error => {
+    console.error("Database error:", error);
     process.exit(1);
   });
