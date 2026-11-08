@@ -335,6 +335,19 @@ async function start(){
  }
 
  try{
+  currentUser=await api("/api/me");
+  $("authModal").style.display="none";
+  connect();
+ }catch{
+  localStorage.removeItem("fam_token");
+  token=null;
+  $("authModal").style.display="grid";
+ }
+}
+
+start();
+
+ try{
   const users=await api("/api/users");
   currentUser=await api("/api/login",{
    method:"POST",
