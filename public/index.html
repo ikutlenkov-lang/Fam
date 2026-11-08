@@ -1,348 +1,539 @@
-
 <!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#10111c">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#10131d">
 <title>Fam Messenger</title>
 <script src="/socket.io/socket.io.js"></script>
+
 <style>
-:root {
-  color-scheme: dark;
-  --bg:#0c0d15;
-  --panel:rgba(255,255,255,.075);
-  --line:rgba(255,255,255,.12);
-  --accent:#8b7cff;
-  --text:#f5f4ff;
-  --muted:#a6a4b8;
+* {
+  box-sizing: border-box;
 }
-*{box-sizing:border-box}
-body{
-  margin:0;background:
-  radial-gradient(circle at 10% 0%,#29234b 0,transparent 35%),
-  radial-gradient(circle at 100% 100%,#172b43 0,transparent 35%),
-  var(--bg);
-  color:var(--text);font-family:Arial,sans-serif;
-  min-height:100vh;
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 10% 10%, #33416c 0, transparent 35%),
+    radial-gradient(circle at 90% 90%, #49316a 0, transparent 35%),
+    #10131d;
+  color: #f5f6ff;
+  font-family: Arial, sans-serif;
 }
-button,input{font:inherit}
-button{
-  border:0;border-radius:13px;padding:12px 16px;
-  color:white;background:var(--accent);cursor:pointer;
+
+button, input {
+  font: inherit;
 }
-button:disabled{opacity:.5;cursor:not-allowed}
-input{
-  width:100%;padding:14px;border-radius:13px;
-  border:1px solid var(--line);background:#171824;
-  color:white;outline:none;
+
+button {
+  cursor: pointer;
+  border: 0;
 }
-.hidden{display:none!important}
-.glass{
-  background:var(--panel);border:1px solid var(--line);
-  backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
-  border-radius:22px;
+
+.app {
+  width: min(1100px, 96%);
+  height: min(760px, 94vh);
+  margin: 3vh auto;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid #ffffff20;
+  border-radius: 24px;
+  background: #171b29dd;
+  box-shadow: 0 25px 90px #0008;
+  backdrop-filter: blur(25px);
 }
-#auth{
-  width:min(420px,92%);margin:9vh auto;padding:30px;
+
+.sidebar {
+  width: 310px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #ffffff16;
+  background: #ffffff05;
 }
-.logo{font-size:29px;font-weight:800;letter-spacing:-1px}
-.logo span{color:#a89cff}
-.subtitle{color:var(--muted);margin:8px 0 25px}
-.field{margin:13px 0}
-.field label{display:block;color:var(--muted);font-size:13px;margin-bottom:7px}
-.auth-actions{display:flex;gap:10px;margin-top:18px}
-.auth-actions button{flex:1}
-.secondary{background:#292a3b}
-#authError{color:#ff929f;min-height:20px;font-size:14px}
-#app{
-  width:min(1100px,96%);height:min(780px,94vh);
-  margin:3vh auto;display:grid;grid-template-columns:290px 1fr;
-  overflow:hidden;
+
+.brand {
+  padding: 24px;
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -.8px;
 }
-.sidebar{padding:20px;border-right:1px solid var(--line);min-width:0}
-.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px}
-.brand{font-weight:800;font-size:22px}
-.brand span{color:#a89cff}
-.profile{font-size:13px;color:var(--muted);margin:17px 0}
-#userList{margin-top:15px;overflow:auto;max-height:65vh}
-.user{
-  padding:13px;border-radius:14px;margin:5px 0;
-  cursor:pointer;display:flex;gap:11px;align-items:center;
+
+.brand span {
+  color: #9b8cff;
 }
-.user:hover,.user.active{background:rgba(139,124,255,.2)}
-.avatar{
-  width:39px;height:39px;border-radius:50%;
-  background:linear-gradient(135deg,#897aff,#42b8c9);
-  display:grid;place-items:center;font-weight:bold;flex-shrink:0;
+
+.me {
+  margin: 0 16px 15px;
+  padding: 13px;
+  border-radius: 15px;
+  background: #ffffff0b;
+  color: #bfc5d9;
+  overflow-wrap: anywhere;
 }
-.user small{display:block;color:var(--muted);margin-top:4px}
-.chat{display:flex;flex-direction:column;min-width:0;min-height:0}
-.chatHead{
-  padding:17px 20px;border-bottom:1px solid var(--line);
-  display:flex;justify-content:space-between;align-items:center;gap:12px;
+
+.section-title {
+  padding: 10px 20px;
+  color: #858da8;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
 }
-.chatName{font-weight:bold}
-.chatStatus{font-size:12px;color:var(--muted);margin-top:4px}
-.callButtons{display:flex;gap:8px}
-.callButtons button{padding:10px 12px}
-#messages{
-  flex:1;overflow:auto;padding:20px;
-  display:flex;flex-direction:column;gap:10px;
+
+.users {
+  overflow-y: auto;
+  flex: 1;
 }
-.msg{
-  max-width:75%;padding:12px 15px;border-radius:17px;
-  background:#252638;align-self:flex-start;
-  overflow-wrap:anywhere;white-space:pre-wrap;
+
+.user {
+  margin: 4px 10px;
+  padding: 13px;
+  border-radius: 13px;
+  color: #e9eaff;
+  background: transparent;
+  text-align: left;
+  width: calc(100% - 20px);
 }
-.msg.mine{align-self:flex-end;background:#6556c9}
-.msg time{display:block;font-size:10px;opacity:.65;margin-top:6px}
-.composer{
-  display:flex;gap:10px;padding:15px;
-  border-top:1px solid var(--line);
+
+.user:hover, .user.active {
+  background: #8d7bff26;
 }
-.composer input{flex:1;min-width:0}
-#empty{
-  flex:1;display:grid;place-items:center;
-  color:var(--muted);text-align:center;padding:25px;
+
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  margin-right: 10px;
+  border-radius: 13px;
+  background: linear-gradient(135deg, #8e7cff, #4fc6dc);
+  color: white;
+  font-weight: bold;
+  vertical-align: middle;
 }
-#callWindow{
-  position:fixed;inset:0;z-index:10;
-  background:rgba(5,6,13,.94);
-  display:flex;align-items:center;justify-content:center;
-  padding:18px;
+
+.logout {
+  margin: 15px;
+  padding: 12px;
+  border-radius: 12px;
+  background: #ff64751c;
+  color: #ff9aa6;
 }
-.callCard{
-  width:min(650px,100%);padding:22px;text-align:center;
+
+.chat {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
-.callTitle{font-size:23px;font-weight:bold;margin:5px}
-.callStatus{color:var(--muted);margin:8px 0 20px}
-.videoStage{
-  position:relative;background:#090a11;border-radius:18px;
-  overflow:hidden;min-height:230px;aspect-ratio:16/9;
+
+.chat-header {
+  min-height: 76px;
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #ffffff16;
+  font-weight: bold;
+  font-size: 17px;
 }
-#remoteVideo{width:100%;height:100%;object-fit:cover}
-#localVideo{
-  position:absolute;right:12px;bottom:12px;
-  width:26%;max-height:35%;object-fit:cover;
-  border:2px solid white;border-radius:12px;
-  background:#202030;
+
+.status {
+  display: block;
+  margin-top: 5px;
+  color: #8e96b0;
+  font-size: 12px;
+  font-weight: normal;
 }
-#remoteAudio{display:none}
-.callControls{
-  display:flex;justify-content:center;gap:10px;
-  flex-wrap:wrap;margin-top:18px;
+
+.messages {
+  flex: 1;
+  padding: 22px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.callControls button{border-radius:50%;width:52px;height:52px;padding:0}
-.danger{background:#e34b62}
-.accept{background:#1d9e70}
-#incomingActions{display:flex;justify-content:center;gap:12px;margin-top:20px}
-#notice{color:#ffb2ba;font-size:13px;margin-top:12px;min-height:18px}
-@media(max-width:650px){
-  #app{height:100vh;width:100%;margin:0;border-radius:0;grid-template-columns:105px 1fr}
-  .sidebar{padding:10px 6px}
-  .brand{font-size:15px}
-  .profile{font-size:10px;overflow-wrap:anywhere}
-  .user{padding:9px 3px;display:flex;flex-direction:column;text-align:center;gap:5px}
-  .user small{display:none}
-  .chatHead{padding:12px}
-  .callButtons{gap:5px}
-  .callButtons button{font-size:12px;padding:9px}
-  #messages{padding:12px}
-  .composer{padding:10px}
-  .msg{max-width:88%}
+
+.empty {
+  margin: auto;
+  text-align: center;
+  color: #8991aa;
+  line-height: 1.7;
+}
+
+.message {
+  max-width: min(75%, 480px);
+  padding: 12px 15px;
+  border-radius: 17px;
+  background: #ffffff12;
+  align-self: flex-start;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.message.mine {
+  align-self: flex-end;
+  background: linear-gradient(135deg, #7668e9, #6555c9);
+}
+
+.message small {
+  display: block;
+  margin-top: 7px;
+  opacity: .65;
+  font-size: 10px;
+  text-align: right;
+}
+
+.attachment {
+  display: block;
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #0002;
+  color: white;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.composer {
+  padding: 15px;
+  display: flex;
+  gap: 9px;
+  border-top: 1px solid #ffffff16;
+  align-items: center;
+}
+
+.composer input {
+  min-width: 0;
+  flex: 1;
+  padding: 14px 16px;
+  border: 1px solid #ffffff18;
+  border-radius: 14px;
+  outline: none;
+  background: #ffffff0b;
+  color: white;
+}
+
+.composer input:focus {
+  border-color: #9485ff;
+}
+
+.send, .attach {
+  height: 46px;
+  min-width: 46px;
+  border-radius: 14px;
+  background: #8172ef;
+  color: white;
+  font-size: 19px;
+}
+
+.attach {
+  background: #ffffff15;
+}
+
+.auth-screen {
+  width: min(420px, 92%);
+  margin: 10vh auto;
+  padding: 30px;
+  border: 1px solid #ffffff20;
+  border-radius: 24px;
+  background: #171b29eF;
+  box-shadow: 0 25px 90px #0008;
+}
+
+.auth-screen h1 {
+  margin-top: 0;
+}
+
+.auth-screen p {
+  color: #9da5bf;
+}
+
+.auth-screen input {
+  width: 100%;
+  padding: 14px;
+  margin: 8px 0;
+  border: 1px solid #ffffff20;
+  border-radius: 12px;
+  outline: none;
+  background: #ffffff0b;
+  color: white;
+}
+
+.auth-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.auth-buttons button {
+  flex: 1;
+  padding: 13px;
+  border-radius: 12px;
+  background: #8172ef;
+  color: white;
+}
+
+.auth-buttons button:last-child {
+  background: #ffffff18;
+}
+
+.notice {
+  min-height: 20px;
+  margin-top: 12px;
+  color: #ff9aa6;
+  font-size: 13px;
+}
+
+.hidden {
+  display: none !important;
+}
+
+@media(max-width: 650px) {
+  .app {
+    width: 100%;
+    height: 100dvh;
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .sidebar {
+    width: 115px;
+    min-width: 115px;
+  }
+
+  .brand {
+    padding: 17px 10px;
+    font-size: 17px;
+  }
+
+  .me {
+    margin: 0 6px 10px;
+    padding: 8px;
+    font-size: 11px;
+  }
+
+  .section-title {
+    padding: 8px;
+    font-size: 10px;
+  }
+
+  .user {
+    margin: 3px 4px;
+    width: calc(100% - 8px);
+    padding: 10px 5px;
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+
+  .user .avatar {
+    display: grid;
+    margin: 0 auto 6px;
+  }
+
+  .logout {
+    margin: 6px;
+    padding: 9px 4px;
+    font-size: 11px;
+  }
+
+  .chat-header {
+    padding: 14px;
+  }
+
+  .messages {
+    padding: 12px;
+  }
+
+  .message {
+    max-width: 88%;
+  }
+
+  .composer {
+    padding: 9px;
+    gap: 6px;
+  }
+
+  .composer input {
+    padding: 12px 9px;
+    font-size: 13px;
+  }
+
+  .send, .attach {
+    min-width: 40px;
+    height: 42px;
+  }
 }
 </style>
 </head>
+
 <body>
 
-<section id="auth" class="glass">
-  <div class="logo">Fam <span>Messenger</span></div>
-  <div class="subtitle">Your world. Your people.</div>
+<div id="authScreen" class="auth-screen">
+  <h1>Fam <span style="color:#9b8cff">Messenger</span></h1>
+  <p>Твой мир. Твои люди.</p>
 
-  <div class="field">
-    <label>Имя пользователя</label>
-    <input id="username" maxlength="24" autocomplete="username"
-      placeholder="Например, potato555">
+  <input id="username" placeholder="Логин" maxlength="30"
+         autocomplete="username">
+
+  <input id="password" type="password" placeholder="Пароль"
+         autocomplete="current-password">
+
+  <div class="auth-buttons">
+    <button onclick="login()">Войти</button>
+    <button onclick="register()">Создать аккаунт</button>
   </div>
 
-  <div class="field">
-    <label>Пароль</label>
-    <input id="password" type="password" maxlength="128"
-      autocomplete="current-password" placeholder="Минимум 10 символов">
-  </div>
+  <div id="authNotice" class="notice"></div>
+</div>
 
-  <div class="auth-actions">
-    <button id="loginBtn">Войти</button>
-    <button id="registerBtn" class="secondary">Регистрация</button>
-  </div>
-  <p id="authError"></p>
-</section>
+<div id="app" class="app hidden">
 
-<main id="app" class="glass hidden">
   <aside class="sidebar">
-    <div class="topbar">
-      <div class="brand">Fam <span>✦</span></div>
-      <button id="logoutBtn" class="secondary" title="Выйти">↪</button>
+    <div class="brand">Fam <span>Messenger</span></div>
+
+    <div class="me">
+      Вы вошли как:<br>
+      <b id="myName">...</b>
     </div>
-    <div class="profile" id="myProfile">Загрузка...</div>
-    <input id="searchUsers" placeholder="Поиск пользователей">
-    <div id="userList"></div>
+
+    <div class="section-title">Контакты</div>
+    <div id="users" class="users"></div>
+
+    <button class="logout" onclick="logout()">Выйти</button>
   </aside>
 
-  <section class="chat">
-    <div id="empty">
+  <main class="chat">
+    <header class="chat-header">
       <div>
-        <div style="font-size:48px">✦</div>
-        <h2>Fam Messenger</h2>
-        Выбери собеседника, чтобы начать общение
+        <div id="chatName">Выберите собеседника</div>
+        <span id="chatStatus" class="status">Fam Messenger</span>
+      </div>
+    </header>
+
+    <div id="messages" class="messages">
+      <div class="empty">
+        <div style="font-size:42px">✦</div>
+        Выберите контакт слева,<br>
+        чтобы начать переписку.
       </div>
     </div>
 
-    <div id="chatArea" class="hidden" style="display:flex;flex-direction:column;flex:1;min-height:0">
-      <header class="chatHead">
-        <div>
-          <div class="chatName" id="chatName">Пользователь</div>
-          <div class="chatStatus">Личные сообщения</div>
-        </div>
-        <div class="callButtons">
-          <button id="audioCall" title="Аудиозвонок">📞</button>
-          <button id="videoCall" title="Видеозвонок">🎥</button>
-        </div>
-      </header>
+    <form class="composer" onsubmit="sendText(event)">
+      <button type="button" class="attach"
+              onclick="document.getElementById('fileInput').click()">
+        +
+      </button>
 
-      <div id="messages"></div>
+      <input id="messageInput"
+             placeholder="Написать сообщение..."
+             maxlength="5000"
+             autocomplete="off">
 
-      <form class="composer" id="messageForm">
-        <input id="messageInput" maxlength="4000"
-          placeholder="Написать сообщение..." autocomplete="off">
-        <button type="submit">➤</button>
-      </form>
-    </div>
-  </section>
-</main>
+      <button class="send" type="submit">➤</button>
 
-<section id="callWindow" class="hidden">
-  <div class="callCard glass">
-    <div class="logo">Fam <span>Call</span></div>
-    <div class="callTitle" id="callTitle">Звонок</div>
-    <div class="callStatus" id="callStatus">Подключение...</div>
-
-    <div class="videoStage" id="videoStage">
-      <video id="remoteVideo" autoplay playsinline></video>
-      <video id="localVideo" autoplay muted playsinline></video>
-    </div>
-    <audio id="remoteAudio" autoplay></audio>
-
-    <div id="incomingActions" class="hidden">
-      <button id="acceptCall" class="accept">Принять</button>
-      <button id="rejectCall" class="danger">Отклонить</button>
-    </div>
-
-    <div class="callControls" id="activeControls">
-      <button id="muteBtn" class="secondary" title="Микрофон">🎙️</button>
-      <button id="cameraBtn" class="secondary" title="Камера">📷</button>
-      <button id="switchCameraBtn" class="secondary" title="Сменить камеру">🔄</button>
-      <button id="endCallBtn" class="danger" title="Завершить">☎</button>
-    </div>
-    <div id="notice"></div>
-  </div>
-</section>
+      <input id="fileInput" type="file" hidden
+             accept="image/jpeg,image/png,image/gif,image/webp,image/heic,.pdf,.txt,.csv,.doc,.docx,.xls,.xlsx"
+             onchange="uploadFile(event)">
+    </form>
+  </main>
+</div>
 
 <script>
-const $ = id => document.getElementById(id);
-
+const API = "";
 let token = localStorage.getItem("fam_token");
 let me = null;
-let users = [];
-let selectedUser = null;
+let activeUser = null;
 let socket = null;
+let loadedMessageIds = new Set();
 
-let currentCall = null;
-let peer = null;
-let localStream = null;
-let remoteStream = null;
-let pendingCandidates = [];
-let incomingCall = null;
-let micEnabled = true;
-let cameraEnabled = true;
-let facingMode = "user";
-
-const rtcConfig = {
-  iceServers: [
-    { urls: "stun:stun.l.google.com:19302" }
-  ]
-};
+const $ = id => document.getElementById(id);
 
 async function api(url, options = {}) {
-  const response = await fetch(url, {
+  const headers = {
+    ...(options.headers || {}),
+    Authorization: "Bearer " + token
+  };
+
+  if (options.body && !(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const response = await fetch(API + url, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {}),
-      ...(options.headers || {})
-    }
+    headers
   });
 
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Ошибка сервера");
+
+  if (!response.ok) {
+    throw new Error(data.error || "Ошибка запроса");
+  }
+
   return data;
 }
 
-function showAuth() {
-  $("auth").classList.remove("hidden");
-  $("app").classList.add("hidden");
+function showNotice(message) {
+  $("authNotice").textContent = message;
 }
 
-function showApp() {
-  $("auth").classList.add("hidden");
-  $("app").classList.remove("hidden");
-}
-
-async function authenticate(mode) {
-  $("authError").textContent = "";
-  const username = $("username").value.trim();
-  const password = $("password").value;
-
+async function login() {
   try {
-    const data = await api("/api/" + mode, {
+    const username = $("username").value.trim();
+    const password = $("password").value;
+
+    const data = await fetch(API + "/api/login", {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password })
-    });
+    }).then(r => r.json());
+
+    if (!data.token) throw new Error(data.error || "Не удалось войти");
 
     token = data.token;
     localStorage.setItem("fam_token", token);
-    await boot();
+    await startApp();
   } catch (error) {
-    $("authError").textContent = error.message;
+    showNotice(error.message);
   }
 }
 
-$("loginBtn").onclick = () => authenticate("login");
-$("registerBtn").onclick = () => authenticate("register");
+async function register() {
+  try {
+    const username = $("username").value.trim();
+    const password = $("password").value;
 
-$("logoutBtn").onclick = () => {
-  if (currentCall) finishCall(false);
-  if (socket) socket.disconnect();
+    const data = await fetch(API + "/api/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    }).then(r => r.json());
 
-  localStorage.removeItem("fam_token");
-  token = null;
-  me = null;
-  selectedUser = null;
-  showAuth();
-};
+    if (!data.token) throw new Error(data.error || "Не удалось создать аккаунт");
 
-async function boot() {
+    token = data.token;
+    localStorage.setItem("fam_token", token);
+    await startApp();
+  } catch (error) {
+    showNotice(error.message);
+  }
+}
+
+async function startApp() {
   try {
     me = await api("/api/me");
-    showApp();
-    $("myProfile").textContent = "Вы вошли как @" + me.username;
+
+    $("authScreen").classList.add("hidden");
+    $("app").classList.remove("hidden");
+    $("myName").textContent = me.username;
+
     connectSocket();
     await loadUsers();
-  } catch {
-    localStorage.removeItem("fam_token");
-    token = null;
-    showAuth();
+  } catch (error) {
+    logout();
+    showNotice(error.message);
   }
 }
 
@@ -353,472 +544,235 @@ function connectSocket() {
     auth: { token }
   });
 
-  socket.on("connect_error", error => {
-    console.error("Socket connection:", error.message);
+  socket.on("connect", () => {
+    $("chatStatus").textContent = "Подключено";
+  });
+
+  socket.on("disconnect", () => {
+    $("chatStatus").textContent = "Переподключение...";
+  });
+
+  socket.on("connect_error", () => {
+    $("chatStatus").textContent = "Нет соединения";
   });
 
   socket.on("new_message", message => {
     if (
-      selectedUser &&
-      (Number(message.sender_id) === Number(selectedUser.id) ||
-       Number(message.receiver_id) === Number(selectedUser.id))
+      activeUser &&
+      (
+        Number(message.sender_id) === Number(activeUser.id) ||
+        Number(message.receiver_id) === Number(activeUser.id)
+      )
     ) {
       addMessage(message);
     }
-  });
 
-  socket.on("call:incoming", data => {
-    if (currentCall) {
-      socket.emit("call:reject", { callId: data.callId });
-      return;
-    }
-
-    incomingCall = data;
-    currentCall = {
-      id: data.callId,
-      mode: data.mode,
-      role: "receiver"
-    };
-
-    $("callWindow").classList.remove("hidden");
-    $("callTitle").textContent = data.callerName;
-    $("callStatus").textContent =
-      data.mode === "video" ? "Входящий видеозвонок" : "Входящий аудиозвонок";
-
-    $("incomingActions").classList.remove("hidden");
-    $("activeControls").classList.add("hidden");
-    $("videoStage").classList.toggle("hidden", data.mode !== "video");
-  });
-
-  $("acceptCall").onclick = acceptIncoming;
-  $("rejectCall").onclick = rejectIncoming;
-
-  socket.on("call:accepted", async data => {
-    if (!currentCall || currentCall.id !== data.callId) return;
-
-    $("callStatus").textContent = "Собеседник подключается...";
-    $("incomingActions").classList.add("hidden");
-    $("activeControls").classList.remove("hidden");
-
-    try {
-      await createPeer();
-      const offer = await peer.createOffer();
-      await peer.setLocalDescription(offer);
-      sendSignal({
-        type: "offer",
-        sdp: peer.localDescription
-      });
-    } catch (error) {
-      showCallError(error.message);
-      finishCall(true);
-    }
-  });
-
-  socket.on("call:signal", async data => {
-    if (!currentCall || currentCall.id !== data.callId) return;
-
-    try {
-      const signal = data.signal;
-
-      if (signal.type === "offer") {
-        await peer.setRemoteDescription(
-          new RTCSessionDescription(signal.sdp)
-        );
-
-        await flushCandidates();
-
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
-
-        sendSignal({
-          type: "answer",
-          sdp: peer.localDescription
-        });
-
-      } else if (signal.type === "answer") {
-        await peer.setRemoteDescription(
-          new RTCSessionDescription(signal.sdp)
-        );
-        await flushCandidates();
-
-      } else if (signal.type === "candidate") {
-        const candidate = new RTCIceCandidate(signal.candidate);
-
-        if (peer && peer.remoteDescription) {
-          await peer.addIceCandidate(candidate);
-        } else {
-          pendingCandidates.push(candidate);
-        }
-      }
-    } catch (error) {
-      showCallError("Ошибка соединения: " + error.message);
-    }
-  });
-
-  socket.on("call:rejected", data => {
-    if (currentCall?.id === data.callId) {
-      showCallError("Собеседник отклонил звонок.");
-      finishCall(false);
-    }
-  });
-
-  socket.on("call:ended", data => {
-    if (currentCall?.id === data.callId) {
-      showCallError(
-        data.reason === "no-answer"
-          ? "Нет ответа."
-          : "Звонок завершён."
-      );
-      finishCall(false);
-    }
+    loadUsers();
   });
 }
 
 async function loadUsers() {
-  users = await api("/api/users");
-  renderUsers();
-}
+  try {
+    const users = await api("/api/users");
+    const container = $("users");
+    container.innerHTML = "";
 
-function renderUsers() {
-  const query = $("searchUsers").value.toLowerCase();
-  $("userList").innerHTML = "";
+    if (!users.length) {
+      container.textContent = "Пока нет контактов";
+      return;
+    }
 
-  users
-    .filter(user => user.username.toLowerCase().includes(query))
-    .forEach(user => {
-      const item = document.createElement("div");
-      item.className = "user" +
-        (selectedUser?.id === user.id ? " active" : "");
+    users.forEach(user => {
+      const button = document.createElement("button");
+      button.className = "user" +
+        (activeUser && Number(activeUser.id) === Number(user.id)
+          ? " active" : "");
 
-      const avatar = document.createElement("div");
+      const avatar = document.createElement("span");
       avatar.className = "avatar";
       avatar.textContent = user.username[0].toUpperCase();
 
-      const info = document.createElement("div");
-      const name = document.createElement("div");
+      const name = document.createElement("span");
       name.textContent = user.username;
 
-      const small = document.createElement("small");
-      small.textContent = "Fam Messenger";
-
-      info.append(name, small);
-      item.append(avatar, info);
-      item.onclick = () => selectUser(user);
-
-      $("userList").append(item);
+      button.append(avatar, name);
+      button.onclick = () => openChat(user);
+      container.appendChild(button);
     });
+  } catch (error) {
+    console.error(error);
+  }
 }
 
-$("searchUsers").addEventListener("input", renderUsers);
+async function openChat(user) {
+  activeUser = user;
+  loadedMessageIds.clear();
 
-async function selectUser(user) {
-  selectedUser = user;
-  $("empty").classList.add("hidden");
-  $("chatArea").classList.remove("hidden");
   $("chatName").textContent = user.username;
+  $("chatStatus").textContent = "Переписка";
   $("messages").innerHTML = "";
-  renderUsers();
+
+  await loadUsers();
 
   try {
-    const history = await api("/api/messages/" + user.id);
-    history.forEach(addMessage);
+    const messages = await api("/api/messages/" + user.id);
+    messages.forEach(addMessage);
+    scrollBottom();
   } catch (error) {
     alert(error.message);
   }
 }
 
 function addMessage(message) {
-  const element = document.createElement("div");
-  element.className = "msg" +
+  if (loadedMessageIds.has(String(message.id))) return;
+  loadedMessageIds.add(String(message.id));
+
+  const box = document.createElement("div");
+  box.className = "message" +
     (Number(message.sender_id) === Number(me.id) ? " mine" : "");
 
-  const content = document.createElement("div");
-  content.textContent = message.content;
+  if (message.content) {
+    const text = document.createElement("div");
+    text.textContent = message.content;
+    box.appendChild(text);
+  }
 
-  const time = document.createElement("time");
-  time.textContent = new Date(message.created_at).toLocaleString();
+  if (message.attachment_id) {
+    const link = document.createElement("a");
+    link.className = "attachment";
+    link.textContent = "📎 " + (message.original_name || "Вложение");
+    link.href = "#";
+    link.onclick = async event => {
+      event.preventDefault();
+      await downloadFile(message.attachment_id, message.original_name);
+    };
+    box.appendChild(link);
+  }
 
-  element.append(content, time);
-  $("messages").append(element);
+  const time = document.createElement("small");
+  time.textContent = new Date(message.created_at).toLocaleString("ru-RU");
+  box.appendChild(time);
+
+  $("messages").appendChild(box);
+  scrollBottom();
+}
+
+function scrollBottom() {
   $("messages").scrollTop = $("messages").scrollHeight;
 }
 
-$("messageForm").onsubmit = event => {
+function sendText(event) {
   event.preventDefault();
 
-  const content = $("messageInput").value.trim();
-  if (!content || !selectedUser || !socket?.connected) return;
+  const input = $("messageInput");
+  const content = input.value.trim();
 
-  socket.emit("send_message", {
-    receiverId: Number(selectedUser.id),
-    content
-  }, result => {
-    if (result?.error) alert(result.error);
-  });
-
-  $("messageInput").value = "";
-};
-
-function openCallWindow(name, mode) {
-  $("callWindow").classList.remove("hidden");
-  $("callTitle").textContent = name;
-  $("callStatus").textContent =
-    mode === "video" ? "Видеозвонок" : "Аудиозвонок";
-
-  $("videoStage").classList.toggle("hidden", mode !== "video");
-  $("incomingActions").classList.add("hidden");
-  $("activeControls").classList.remove("hidden");
-  $("notice").textContent = "";
-}
-
-async function startCall(mode) {
-  if (!selectedUser) return;
-  if (!socket?.connected) {
-    alert("Нет соединения с сервером.");
+  if (!activeUser) {
+    alert("Сначала выбери собеседника");
     return;
   }
 
-  if (currentCall) return;
+  if (!content) return;
 
-  currentCall = {
-    id: null,
-    mode,
-    role: "caller"
-  };
+  if (!socket || !socket.connected) {
+    alert("Нет соединения с сервером");
+    return;
+  }
 
-  openCallWindow(selectedUser.username, mode);
-  $("callStatus").textContent = "Запрашиваем доступ к микрофону и камере...";
+  socket.emit("send_message", {
+    receiverId: activeUser.id,
+    content
+  }, result => {
+    if (!result || !result.ok) {
+      alert(result?.error || "Не удалось отправить сообщение");
+      return;
+    }
+
+    input.value = "";
+  });
+}
+
+async function uploadFile(event) {
+  const file = event.target.files[0];
+  event.target.value = "";
+
+  if (!file) return;
+
+  if (!activeUser) {
+    alert("Сначала выбери собеседника");
+    return;
+  }
+
+  const form = new FormData();
+  form.append("file", file);
+  form.append("receiverId", activeUser.id);
 
   try {
-    await createPeer();
+    $("chatStatus").textContent = "Загрузка файла...";
 
-    socket.emit("call:invite", {
-      to: Number(selectedUser.id),
-      mode
+    const uploaded = await api("/api/upload", {
+      method: "POST",
+      body: form
+    });
+
+    socket.emit("send_message", {
+      receiverId: activeUser.id,
+      content: "",
+      attachmentId: uploaded.id
     }, result => {
-      if (result?.error) {
-        showCallError(result.error);
-        finishCall(false);
-      } else if (currentCall) {
-        currentCall.id = result.callId;
-        $("callStatus").textContent = "Ожидаем ответа...";
+      if (!result || !result.ok) {
+        alert(result?.error || "Файл загружен, но сообщение не отправлено");
       }
+
+      $("chatStatus").textContent = "Переписка";
     });
+
   } catch (error) {
-    showCallError(error.message);
-    finishCall(false);
+    alert(error.message);
+    $("chatStatus").textContent = "Переписка";
   }
 }
 
-$("audioCall").onclick = () => startCall("audio");
-$("videoCall").onclick = () => startCall("video");
-
-async function acceptIncoming() {
-  if (!currentCall || !incomingCall) return;
-
+async function downloadFile(id, filename) {
   try {
-    await createPeer();
-
-    socket.emit("call:accept", {
-      callId: currentCall.id
-    }, result => {
-      if (result?.error) {
-        showCallError(result.error);
-        finishCall(false);
-      }
+    const response = await fetch(API + "/api/files/" + id, {
+      headers: { Authorization: "Bearer " + token }
     });
 
-    $("incomingActions").classList.add("hidden");
-    $("activeControls").classList.remove("hidden");
-    $("callStatus").textContent = "Соединяем...";
-    incomingCall = null;
+    if (!response.ok) throw new Error("Не удалось скачать файл");
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename || "file";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   } catch (error) {
-    showCallError(error.message);
-    finishCall(true);
+    alert(error.message);
   }
 }
 
-function rejectIncoming() {
-  if (currentCall?.id) {
-    socket.emit("call:reject", { callId: currentCall.id });
-  }
-  finishCall(false);
+function logout() {
+  if (socket) socket.disconnect();
+
+  localStorage.removeItem("fam_token");
+  token = null;
+  me = null;
+  activeUser = null;
+
+  $("app").classList.add("hidden");
+  $("authScreen").classList.remove("hidden");
 }
 
-async function createPeer() {
-  const video = currentCall.mode === "video";
-
-  localStream = await navigator.mediaDevices.getUserMedia({
-    audio: true,
-    video: video
-      ? { facingMode: facingMode }
-      : false
-  });
-
-  $("localVideo").srcObject = localStream;
-  $("localVideo").classList.toggle("hidden", !video);
-
-  remoteStream = new MediaStream();
-  $("remoteVideo").srcObject = remoteStream;
-  $("remoteAudio").srcObject = remoteStream;
-
-  peer = new RTCPeerConnection(rtcConfig);
-
-  localStream.getTracks().forEach(track => {
-    peer.addTrack(track, localStream);
-  });
-
-  peer.ontrack = event => {
-    event.streams[0].getTracks().forEach(track => {
-      remoteStream.addTrack(track);
-    });
-
-    $("remoteVideo").srcObject = remoteStream;
-    $("remoteAudio").srcObject = remoteStream;
-    $("callStatus").textContent = "Соединение установлено";
-  };
-
-  peer.onicecandidate = event => {
-    if (event.candidate) {
-      sendSignal({
-        type: "candidate",
-        candidate: event.candidate
-      });
-    }
-  };
-
-  peer.onconnectionstatechange = () => {
-    if (!peer) return;
-
-    if (peer.connectionState === "connected") {
-      $("callStatus").textContent = "На связи";
-    }
-
-    if (["failed", "disconnected"].includes(peer.connectionState)) {
-      $("callStatus").textContent = "Проблемы с соединением";
-    }
-  };
+if (token) {
+  startApp();
 }
-
-function sendSignal(signal) {
-  if (!currentCall?.id || !socket?.connected) return;
-
-  socket.emit("call:signal", {
-    callId: currentCall.id,
-    signal
-  });
-}
-
-async function flushCandidates() {
-  if (!peer?.remoteDescription) return;
-
-  const candidates = pendingCandidates.splice(0);
-
-  for (const candidate of candidates) {
-    await peer.addIceCandidate(candidate);
-  }
-}
-
-$("muteBtn").onclick = () => {
-  if (!localStream) return;
-
-  micEnabled = !micEnabled;
-  localStream.getAudioTracks().forEach(track => {
-    track.enabled = micEnabled;
-  });
-
-  $("muteBtn").textContent = micEnabled ? "🎙️" : "🔇";
-};
-
-$("cameraBtn").onclick = () => {
-  if (!localStream) return;
-
-  cameraEnabled = !cameraEnabled;
-  localStream.getVideoTracks().forEach(track => {
-    track.enabled = cameraEnabled;
-  });
-
-  $("cameraBtn").textContent = cameraEnabled ? "📷" : "🚫";
-};
-
-$("switchCameraBtn").onclick = async () => {
-  if (!localStream || currentCall?.mode !== "video") return;
-
-  try {
-    facingMode = facingMode === "user" ? "environment" : "user";
-
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode }
-    });
-
-    const newTrack = newStream.getVideoTracks()[0];
-    const sender = peer.getSenders().find(s =>
-      s.track && s.track.kind === "video"
-    );
-
-    if (sender) await sender.replaceTrack(newTrack);
-
-    localStream.getVideoTracks().forEach(track => {
-      track.stop();
-      localStream.removeTrack(track);
-    });
-
-    localStream.addTrack(newTrack);
-    $("localVideo").srcObject = localStream;
-  } catch (error) {
-    showCallError("Не удалось переключить камеру.");
-  }
-};
-
-$("endCallBtn").onclick = () => finishCall(true);
-
-function showCallError(message) {
-  $("notice").textContent = message;
-  $("callStatus").textContent = message;
-}
-
-function finishCall(notifyServer) {
-  if (notifyServer && currentCall?.id && socket?.connected) {
-    socket.emit("call:end", { callId: currentCall.id });
-  }
-
-  if (peer) {
-    peer.ontrack = null;
-    peer.onicecandidate = null;
-    peer.close();
-  }
-
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-  }
-
-  if (remoteStream) {
-    remoteStream.getTracks().forEach(track => track.stop());
-  }
-
-  $("localVideo").srcObject = null;
-  $("remoteVideo").srcObject = null;
-  $("remoteAudio").srcObject = null;
-
-  peer = null;
-  localStream = null;
-  remoteStream = null;
-  pendingCandidates = [];
-  incomingCall = null;
-  currentCall = null;
-
-  $("callWindow").classList.add("hidden");
-  $("incomingActions").classList.add("hidden");
-  $("activeControls").classList.remove("hidden");
-
-  micEnabled = true;
-  cameraEnabled = true;
-  $("muteBtn").textContent = "🎙️";
-  $("cameraBtn").textContent = "📷";
-}
-
-boot();
 </script>
+
 </body>
 </html>
