@@ -1,0 +1,17 @@
+{
+  "name": "fam-messenger",
+  "version": "1.0.0",
+  "description": "Fam Messenger - Your world. Your people.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1",
+    "bcryptjs": "^3.0.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.16.3",
+    "helmet": "^8.1.0"
+  }
+}
