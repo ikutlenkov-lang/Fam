@@ -1,8 +1,8 @@
-
 {
   "name": "fam-messenger",
   "version": "4.0.0",
   "description": "Fam Messenger",
+  "license": "UNLICENSED",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
