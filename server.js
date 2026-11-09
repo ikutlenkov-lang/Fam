@@ -1,258 +1,150 @@
+
 const express = require("express");
 const http = require("http");
 const path = require("path");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const { Pool } = require("pg");
-const helmet = require("helmet");
 const multer = require("multer");
+const helmet = require("helmet");
 const { Server } = require("socket.io");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET;
+const TOKEN_SECRET = process.env.JWT_SECRET;
 const DATABASE_URL = process.env.DATABASE_URL;
 
-if (!JWT_SECRET || !DATABASE_URL) {
-  console.error("Missing JWT_SECRET or DATABASE_URL environment variable");
+if (!TOKEN_SECRET || !DATABASE_URL) {
+  console.error("Missing JWT_SECRET or DATABASE_URL");
   process.exit(1);
 }
 
+// PostgreSQL
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: process.env.NODE_ENV === "production"
     ? { rejectUnauthorized: false }
-    : false
+    : undefined
 });
 
-app.use(helmet({ contentSecurityPolicy: false }));
-app.use(express.json({ limit: "1mb" }));
+// Разрешённые источники
+const allowedOrigins = new Set([
+  "null",
+  "https://fam-4xqf.onrender.com",
+  "https://appassets.androidplatform.net",
+  "https://localhost",
+  "http://localhost"
+]);
 
-// Главная страница и статические файлы
+function isAllowedOrigin(origin) {
+  return !origin || allowedOrigins.has(origin);
+}
+
+// CORS для обычных HTTP-запросов
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && isAllowedOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+
+  res.setHeader(
+    "Access-Control-Allow-Methods",
+    "GET, POST, PUT, PATCH, DELETE, OPTIONS"
+  );
+
+  res.setHeader(
+    "Access-Control-Allow-Headers",
+    "Content-Type, Authorization"
+  );
+
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+
+  if (origin && !isAllowedOrigin(origin)) {
+    return res.status(403).json({ error: "Origin not allowed" });
+  }
+
+  next();
+});
+
+// Настройки безопасности
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
+
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true }));
+
+// Статические файлы сайта
 app.use(express.static(path.join(__dirname, "public")));
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", app: "Fam Messenger" });
+// Socket.IO
+const io = new Server(server, {
+  cors: {
+    origin: (origin, callback) => {
+      if (isAllowedOrigin(origin)) {
+        return callback(null, true);
+      }
+      callback(new Error("Origin not allowed"));
+    },
+    methods: ["GET", "POST"]
+  }
 });
 
-// База данных
-async function initDatabase() {
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id SERIAL PRIMARY KEY,
-      username VARCHAR(30) UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS files (
-      id BIGSERIAL PRIMARY KEY,
-      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      receiver_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      original_name TEXT NOT NULL,
-      mime_type TEXT NOT NULL,
-      file_size BIGINT NOT NULL,
-      data BYTEA NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS messages (
-      id BIGSERIAL PRIMARY KEY,
-      sender_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      receiver_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-      content TEXT DEFAULT '',
-      attachment_id BIGINT REFERENCES files(id) ON DELETE SET NULL,
-      created_at TIMESTAMPTZ DEFAULT NOW()
-    )
-  `);
-
-  // Миграция для уже существующей таблицы messages
-  await pool.query(`
-    ALTER TABLE messages
-    ADD COLUMN IF NOT EXISTS attachment_id BIGINT
-    REFERENCES files(id) ON DELETE SET NULL
-  `);
-
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS messages_chat_idx
-    ON messages(sender_id, receiver_id, created_at)
-  `);
-}
-
-// Авторизация
+// Проверка JWT
 function createToken(user) {
   return jwt.sign(
-    { id: user.id, username: user.username },
-    JWT_SECRET,
-    { expiresIn: "7d" }
+    { userId: user.id },
+    TOKEN_SECRET,
+    { expiresIn: "30d" }
   );
 }
 
-function auth(req, res, next) {
-  const header = req.headers.authorization || "";
-  const token = header.startsWith("Bearer ")
-    ? header.slice(7)
-    : null;
+function verifyToken(token) {
+  return jwt.verify(token, TOKEN_SECRET);
+}
 
-  if (!token) {
-    return res.status(401).json({ error: "Требуется вход" });
-  }
-
+async function authenticate(req, res, next) {
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ")
+      ? header.slice(7)
+      : "";
+
+    if (!token) {
+      return res.status(401).json({ error: "Authorization required" });
+    }
+
+    const decoded = verifyToken(token);
+
+    const result = await pool.query(
+      "SELECT id, username FROM users WHERE id = $1",
+      [decoded.userId]
+    );
+
+    if (!result.rows.length) {
+      return res.status(401).json({ error: "User not found" });
+    }
+
+    req.user = result.rows[0];
     next();
-  } catch {
-    return res.status(401).json({ error: "Сессия истекла. Войдите снова." });
+  } catch (error) {
+    return res.status(401).json({ error: "Invalid or expired token" });
   }
 }
 
-// Регистрация
-app.post("/api/register", async (req, res) => {
-  try {
-    const username = String(req.body.username || "").trim();
-    const password = String(req.body.password || "");
-
-    if (!/^[a-zA-Z0-9_]{3,30}$/.test(username)) {
-      return res.status(400).json({
-        error: "Логин: 3–30 символов, только буквы, цифры и _"
-      });
-    }
-
-    if (password.length < 6 || password.length > 100) {
-      return res.status(400).json({
-        error: "Пароль должен содержать от 6 до 100 символов"
-      });
-    }
-
-    const hash = await bcrypt.hash(password, 12);
-
-    const result = await pool.query(
-      `INSERT INTO users(username, password)
-       VALUES($1, $2)
-       RETURNING id, username`,
-      [username, hash]
-    );
-
-    const user = result.rows[0];
-
-    res.json({
-      token: createToken(user),
-      user
-    });
-  } catch (error) {
-    if (error.code === "23505") {
-      return res.status(409).json({ error: "Такой логин уже занят" });
-    }
-
-    console.error(error);
-    res.status(500).json({ error: "Ошибка регистрации" });
-  }
-});
-
-// Вход
-app.post("/api/login", async (req, res) => {
-  try {
-    const username = String(req.body.username || "").trim();
-    const password = String(req.body.password || "");
-
-    const result = await pool.query(
-      "SELECT * FROM users WHERE username = $1",
-      [username]
-    );
-
-    const user = result.rows[0];
-
-    if (!user || !(await bcrypt.compare(password, user.password))) {
-      return res.status(401).json({ error: "Неверный логин или пароль" });
-    }
-
-    res.json({
-      token: createToken(user),
-      user: { id: user.id, username: user.username }
-    });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Ошибка входа" });
-  }
-});
-
-// Текущий пользователь
-app.get("/api/me", auth, async (req, res) => {
-  res.json({
-    id: req.user.id,
-    username: req.user.username
-  });
-});
-
-// Список пользователей
-app.get("/api/users", auth, async (req, res) => {
-  try {
-    const result = await pool.query(
-      `SELECT id, username
-       FROM users
-       WHERE id != $1
-       ORDER BY username`,
-      [req.user.id]
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Не удалось загрузить пользователей" });
-  }
-});
-
-// История переписки
-app.get("/api/messages/:userId", auth, async (req, res) => {
-  try {
-    const otherId = Number(req.params.userId);
-
-    if (!Number.isInteger(otherId) || otherId <= 0) {
-      return res.status(400).json({ error: "Некорректный пользователь" });
-    }
-
-    const result = await pool.query(
-      `SELECT
-         m.id,
-         m.sender_id,
-         m.receiver_id,
-         m.content,
-         m.attachment_id,
-         m.created_at,
-         f.original_name,
-         f.mime_type,
-         f.file_size
-       FROM messages m
-       LEFT JOIN files f ON f.id = m.attachment_id
-       WHERE
-         (m.sender_id = $1 AND m.receiver_id = $2)
-         OR
-         (m.sender_id = $2 AND m.receiver_id = $1)
-       ORDER BY m.created_at ASC
-       LIMIT 500`,
-      [req.user.id, otherId]
-    );
-
-    res.json(result.rows);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Ошибка загрузки сообщений" });
-  }
-});
-
 // Загрузка файлов
-const allowedTypes = new Set([
+const allowedMimeTypes = new Set([
   "image/jpeg",
   "image/png",
   "image/gif",
@@ -269,153 +161,319 @@ const allowedTypes = new Set([
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 15 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (!allowedTypes.has(file.mimetype)) {
-      return cb(new Error("Этот тип файла не поддерживается"));
+  limits: {
+    fileSize: 15 * 1024 * 1024
+  },
+  fileFilter: (req, file, callback) => {
+    if (!allowedMimeTypes.has(file.mimetype)) {
+      return callback(new Error("File type not allowed"));
     }
-    cb(null, true);
+    callback(null, true);
   }
 });
 
-app.post("/api/upload", auth, (req, res) => {
-  upload.single("file")(req, res, async (error) => {
-    if (error) {
+// Проверка сервера
+app.get("/health", (req, res) => {
+  res.json({ ok: true });
+});
+
+// Регистрация
+app.post("/api/register", async (req, res, next) => {
+  try {
+    const username = String(req.body.username || "").trim();
+    const password = String(req.body.password || "");
+
+    if (!/^[a-zA-Z0-9_]{3,24}$/.test(username)) {
       return res.status(400).json({
-        error: error.code === "LIMIT_FILE_SIZE"
-          ? "Максимальный размер файла — 15 МБ"
-          : error.message
+        error: "Имя: 3-24 символа, только латиница, цифры и _"
       });
     }
 
+    if (password.length < 6 || password.length > 128) {
+      return res.status(400).json({
+        error: "Пароль должен содержать от 6 до 128 символов"
+      });
+    }
+
+    const existing = await pool.query(
+      "SELECT id FROM users WHERE LOWER(username) = LOWER($1)",
+      [username]
+    );
+
+    if (existing.rows.length) {
+      return res.status(409).json({
+        error: "Это имя пользователя уже занято"
+      });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    const result = await pool.query(
+      `INSERT INTO users (username, password)
+       VALUES ($1, $2)
+       RETURNING id, username`,
+      [username, passwordHash]
+    );
+
+    const user = result.rows[0];
+
+    res.status(201).json({
+      token: createToken(user),
+      user
+    });
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({
+        error: "Это имя пользователя уже занято"
+      });
+    }
+    next(error);
+  }
+});
+
+// Вход
+app.post("/api/login", async (req, res, next) => {
+  try {
+    const username = String(req.body.username || "").trim();
+    const password = String(req.body.password || "");
+
+    const result = await pool.query(
+      `SELECT id, username, password
+       FROM users
+       WHERE LOWER(username) = LOWER($1)`,
+      [username]
+    );
+
+    if (!result.rows.length) {
+      return res.status(401).json({
+        error: "Неверное имя пользователя или пароль"
+      });
+    }
+
+    const user = result.rows[0];
+    const valid = await bcrypt.compare(password, user.password);
+
+    if (!valid) {
+      return res.status(401).json({
+        error: "Неверное имя пользователя или пароль"
+      });
+    }
+
+    res.json({
+      token: createToken(user),
+      user: {
+        id: user.id,
+        username: user.username
+      }
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Информация о текущем пользователе
+app.get("/api/me", authenticate, (req, res) => {
+  res.json(req.user);
+});
+
+// Список пользователей
+app.get("/api/users", authenticate, async (req, res, next) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, username
+       FROM users
+       WHERE id <> $1
+       ORDER BY username ASC`,
+      [req.user.id]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// История переписки
+app.get("/api/messages/:userId", authenticate, async (req, res, next) => {
+  try {
+    const otherId = Number(req.params.userId);
+
+    if (!Number.isInteger(otherId) || otherId <= 0) {
+      return res.status(400).json({ error: "Invalid user ID" });
+    }
+
+    const result = await pool.query(
+      `SELECT id, sender_id, receiver_id, content,
+              attachment_id, created_at
+       FROM messages
+       WHERE
+         (sender_id = $1 AND receiver_id = $2)
+         OR
+         (sender_id = $2 AND receiver_id = $1)
+       ORDER BY created_at ASC
+       LIMIT 1000`,
+      [req.user.id, otherId]
+    );
+
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Загрузка вложения
+app.post(
+  "/api/upload",
+  authenticate,
+  upload.single("file"),
+  async (req, res, next) => {
     try {
       if (!req.file) {
-        return res.status(400).json({ error: "Файл не выбран" });
+        return res.status(400).json({ error: "File is required" });
       }
 
       const receiverId = Number(req.body.receiverId);
 
-      if (!Number.isInteger(receiverId) || receiverId <= 0 ||
-          receiverId === Number(req.user.id)) {
-        return res.status(400).json({ error: "Некорректный получатель" });
+      if (!Number.isInteger(receiverId) || receiverId <= 0) {
+        return res.status(400).json({ error: "Invalid receiver ID" });
       }
 
-      const recipient = await pool.query(
+      const receiver = await pool.query(
         "SELECT id FROM users WHERE id = $1",
         [receiverId]
       );
 
-      if (!recipient.rowCount) {
-        return res.status(404).json({ error: "Пользователь не найден" });
+      if (!receiver.rows.length) {
+        return res.status(404).json({ error: "Receiver not found" });
       }
 
       const result = await pool.query(
         `INSERT INTO files
          (sender_id, receiver_id, original_name, mime_type, file_size, data)
-         VALUES($1, $2, $3, $4, $5, $6)
-         RETURNING id, original_name, mime_type, file_size`,
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING id`,
         [
           req.user.id,
           receiverId,
-          req.file.originalname.slice(0, 255),
+          req.file.originalname,
           req.file.mimetype,
           req.file.size,
           req.file.buffer
         ]
       );
 
-      res.json(result.rows[0]);
-    } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: "Ошибка загрузки файла" });
+      res.status(201).json({
+        id: result.rows[0].id
+      });
+    } catch (error) {
+      next(error);
     }
-  });
-});
+  }
+);
 
-// Получение файла
-app.get("/api/files/:id", auth, async (req, res) => {
+// Скачивание вложения
+app.get("/api/files/:id", authenticate, async (req, res, next) => {
   try {
     const fileId = Number(req.params.id);
 
     if (!Number.isInteger(fileId) || fileId <= 0) {
-      return res.status(400).json({ error: "Некорректный файл" });
+      return res.status(400).json({ error: "Invalid file ID" });
     }
 
     const result = await pool.query(
-      `SELECT original_name, mime_type, data
+      `SELECT original_name, mime_type, data, sender_id, receiver_id
        FROM files
        WHERE id = $1
        AND (sender_id = $2 OR receiver_id = $2)`,
       [fileId, req.user.id]
     );
 
-    if (!result.rowCount) {
-      return res.status(404).json({ error: "Файл не найден" });
+    if (!result.rows.length) {
+      return res.status(404).json({ error: "File not found" });
     }
 
     const file = result.rows[0];
 
     res.setHeader("Content-Type", file.mime_type);
-    res.setHeader("X-Content-Type-Options", "nosniff");
-    res.setHeader("Content-Disposition", "attachment");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`
+    );
+    res.setHeader("Content-Length", file.data.length);
 
     res.send(file.data);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: "Ошибка получения файла" });
+    next(error);
   }
 });
 
-// Socket.IO авторизация
-io.use((socket, next) => {
+// Авторизация Socket.IO
+io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token;
 
     if (!token) {
-      return next(new Error("Требуется авторизация"));
+      return next(new Error("Authentication required"));
     }
 
-    socket.user = jwt.verify(token, JWT_SECRET);
+    const decoded = verifyToken(token);
+
+    const result = await pool.query(
+      "SELECT id, username FROM users WHERE id = $1",
+      [decoded.userId]
+    );
+
+    if (!result.rows.length) {
+      return next(new Error("User not found"));
+    }
+
+    socket.user = result.rows[0];
     next();
-  } catch {
-    next(new Error("Недействительная сессия"));
+  } catch (error) {
+    next(new Error("Invalid or expired token"));
   }
 });
 
-io.on("connection", (socket) => {
-  const myId = Number(socket.user.id);
+// Соединение пользователя
+io.on("connection", socket => {
+  const userId = socket.user.id;
 
-  socket.join(`user:${myId}`);
+  socket.join(`user:${userId}`);
 
-  socket.on("send_message", async (data, callback) => {
+  console.log("User connected:", userId);
+
+  // Отправка сообщения
+  socket.on("send_message", async (payload, callback) => {
     try {
-      const receiverId = Number(data?.receiverId);
-      const content = String(data?.content || "").trim();
-      const attachmentId = data?.attachmentId
-        ? Number(data.attachmentId)
+      const receiverId = Number(payload?.receiverId);
+      const content = String(payload?.content || "").trim();
+      const attachmentId = payload?.attachmentId
+        ? Number(payload.attachmentId)
         : null;
 
-      if (!Number.isInteger(receiverId) ||
-          receiverId <= 0 ||
-          receiverId === myId) {
-        throw new Error("Некорректный получатель");
+      if (!Number.isInteger(receiverId) || receiverId <= 0) {
+        throw new Error("Invalid receiver");
+      }
+
+      if (receiverId === Number(userId)) {
+        throw new Error("Cannot message yourself");
       }
 
       if (!content && !attachmentId) {
-        throw new Error("Пустое сообщение");
+        throw new Error("Message is empty");
       }
 
-      if (content.length > 5000) {
-        throw new Error("Сообщение слишком длинное");
+      if (content.length > 10000) {
+        throw new Error("Message is too long");
       }
 
-      const recipient = await pool.query(
+      const receiver = await pool.query(
         "SELECT id FROM users WHERE id = $1",
         [receiverId]
       );
 
-      if (!recipient.rowCount) {
-        throw new Error("Пользователь не найден");
+      if (!receiver.rows.length) {
+        throw new Error("Receiver not found");
       }
 
       if (attachmentId) {
@@ -424,70 +482,128 @@ io.on("connection", (socket) => {
            WHERE id = $1
            AND sender_id = $2
            AND receiver_id = $3`,
-          [attachmentId, myId, receiverId]
+          [attachmentId, userId, receiverId]
         );
 
-        if (!file.rowCount) {
-          throw new Error("Файл не найден или не принадлежит этой переписке");
+        if (!file.rows.length) {
+          throw new Error("Attachment not found");
         }
       }
 
       const result = await pool.query(
         `INSERT INTO messages
          (sender_id, receiver_id, content, attachment_id)
-         VALUES($1, $2, $3, $4)
+         VALUES ($1, $2, $3, $4)
          RETURNING id, sender_id, receiver_id, content,
                    attachment_id, created_at`,
-        [myId, receiverId, content, attachmentId]
+        [userId, receiverId, content, attachmentId]
       );
 
       const message = result.rows[0];
 
-      if (attachmentId) {
-        const file = await pool.query(
-          `SELECT original_name, mime_type, file_size
-           FROM files WHERE id = $1`,
-          [attachmentId]
-        );
-
-        Object.assign(message, {
-          original_name: file.rows[0].original_name,
-          mime_type: file.rows[0].mime_type,
-          file_size: file.rows[0].file_size
-        });
-      }
-
-      io.to(`user:${receiverId}`).emit("new_message", message);
-      io.to(`user:${myId}`).emit("new_message", message);
+      io.to(`user:${userId}`)
+        .to(`user:${receiverId}`)
+        .emit("new_message", message);
 
       if (typeof callback === "function") {
         callback({ ok: true, message });
       }
     } catch (error) {
+      console.error("send_message error:", error.message);
+
       if (typeof callback === "function") {
         callback({ ok: false, error: error.message });
       }
+
+      socket.emit("message_error", {
+        error: error.message
+      });
     }
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", userId);
   });
 });
 
-// Ошибки
-app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ error: "Внутренняя ошибка сервера" });
+// Обработка ошибок загрузки и запросов
+app.use((error, req, res, next) => {
+  console.error("Server error:", error);
+
+  if (error instanceof multer.MulterError) {
+    return res.status(400).json({
+      error: error.code === "LIMIT_FILE_SIZE"
+        ? "Максимальный размер файла 15 МБ"
+        : "Ошибка загрузки файла"
+    });
+  }
+
+  if (error.message === "File type not allowed") {
+    return res.status(400).json({ error: error.message });
+  }
+
+  res.status(500).json({
+    error: "Internal server error"
+  });
 });
 
+// Создание таблиц и запуск
 async function start() {
-  try {
-    await initDatabase();
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGSERIAL PRIMARY KEY,
+      username TEXT NOT NULL UNIQUE,
+      password TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
 
-    server.listen(PORT, "0.0.0.0", () => {
-      console.log(`Fam Messenger started on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error("Database startup error:", error);
-    process.exit(1);
-  }
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx
+    ON users (LOWER(username))
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS files (
+      id BIGSERIAL PRIMARY KEY,
+      sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      receiver_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      original_name TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      file_size BIGINT NOT NULL,
+      data BYTEA NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id BIGSERIAL PRIMARY KEY,
+      sender_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      receiver_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      content TEXT NOT NULL DEFAULT '',
+      attachment_id BIGINT REFERENCES files(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    ALTER TABLE messages
+    ADD COLUMN IF NOT EXISTS attachment_id BIGINT
+    REFERENCES files(id) ON DELETE SET NULL
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS messages_conversation_idx
+    ON messages (sender_id, receiver_id, created_at)
+  `);
+
+  server.listen(PORT, "0.0.0.0", () => {
+    console.log(`Fam Messenger running on port ${PORT}`);
+  });
 }
 
-start();
+start().catch(error => {
+  console.error("Startup failed:", error);
+  process.exit(1);
+});
